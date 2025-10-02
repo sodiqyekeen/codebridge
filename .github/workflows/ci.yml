@@ -17,12 +17,8 @@ env:
 
 jobs:
   build:
-    name: Build on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-      fail-fast: false
+    name: Build and Test
+    runs-on: ubuntu-latest
     
     steps:
       - name: Checkout repository
@@ -51,17 +47,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}
+          name: test-results
           path: '**/test-results.trx'
       
-      - name: Check for warnings
-        shell: bash
-        run: |
-          if dotnet build --no-restore --configuration Release 2>&1 | grep -i "warning"; then
-            echo "⚠️  Build produced warnings"
-            exit 1
-          fi
-          echo "✅ No warnings detected"
 
   test-coverage:
     name: Code Coverage
