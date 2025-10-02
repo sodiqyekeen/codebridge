@@ -67,7 +67,7 @@ jobs:
       
       - name: Generate changelog
         id: changelog
-        uses: mikepenz/release-changelog-builder-action@v4
+        uses: mikepenz/release-changelog-builder-action@v5
         continue-on-error: true
         with:
           configuration: ".github/changelog-config.json"
