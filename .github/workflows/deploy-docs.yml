@@ -56,6 +56,13 @@ jobs:
       - name: Add .nojekyll file
         run: touch _site/.nojekyll
       
+      - name: Create index.html symlink
+        run: |
+          cd _site
+          if [ -f INDEX.html ] && [ ! -f index.html ]; then
+            cp INDEX.html index.html
+          fi
+      
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
