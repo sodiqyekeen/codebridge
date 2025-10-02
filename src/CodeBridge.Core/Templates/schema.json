@@ -1,0 +1,302 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://codebridge.dev/schema.json",
+    "title": "CodeBridge Configuration",
+    "description": "Configuration schema for CodeBridge TypeScript/JavaScript SDK generator",
+    "type": "object",
+    "required": [
+        "output"
+    ],
+    "properties": {
+        "$schema": {
+            "type": "string",
+            "description": "JSON schema reference"
+        },
+        "solutionPath": {
+            "type": "string",
+            "description": "Path to the .NET solution file"
+        },
+        "projectPaths": {
+            "type": "array",
+            "description": "Paths to individual .NET project files (alternative to solutionPath)",
+            "items": {
+                "type": "string"
+            }
+        },
+        "generation": {
+            "type": "object",
+            "description": "Generation mode and behavior configuration",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": [
+                        "Manual",
+                        "BuildIntegration",
+                        "Watch"
+                    ],
+                    "default": "Manual",
+                    "description": "SDK generation mode"
+                },
+                "buildEvents": {
+                    "type": "array",
+                    "description": "MSBuild events that trigger generation (BuildIntegration mode)",
+                    "items": {
+                        "type": "string",
+                        "enum": [
+                            "BeforeBuild",
+                            "AfterBuild",
+                            "AfterPublish"
+                        ]
+                    }
+                },
+                "watchPaths": {
+                    "type": "array",
+                    "description": "File paths to watch for changes (Watch mode)",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "debounceMs": {
+                    "type": "integer",
+                    "default": 500,
+                    "minimum": 0,
+                    "description": "Debounce delay in milliseconds for file change events"
+                },
+                "validateOnly": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Only validate configuration without generating code"
+                }
+            }
+        },
+        "output": {
+            "type": "object",
+            "description": "Output configuration for generated SDK",
+            "required": [
+                "path"
+            ],
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Output directory for generated SDK"
+                },
+                "packageName": {
+                    "type": "string",
+                    "description": "NPM package name"
+                },
+                "packageVersion": {
+                    "type": "string",
+                    "default": "1.0.0",
+                    "description": "Package version (semver)"
+                },
+                "author": {
+                    "type": "string",
+                    "description": "Package author"
+                },
+                "license": {
+                    "type": "string",
+                    "default": "MIT",
+                    "description": "Package license"
+                },
+                "cleanBeforeGenerate": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Clean output directory before generating"
+                }
+            }
+        },
+        "target": {
+            "type": "object",
+            "description": "Target framework and language settings",
+            "properties": {
+                "framework": {
+                    "type": "string",
+                    "enum": [
+                        "React",
+                        "NextJs",
+                        "Vue",
+                        "Angular",
+                        "Vanilla"
+                    ],
+                    "default": "React",
+                    "description": "Target JavaScript framework"
+                },
+                "language": {
+                    "type": "string",
+                    "enum": [
+                        "TypeScript",
+                        "JavaScript"
+                    ],
+                    "default": "TypeScript",
+                    "description": "Target language"
+                },
+                "moduleSystem": {
+                    "type": "string",
+                    "enum": [
+                        "ESM",
+                        "CommonJS"
+                    ],
+                    "default": "ESM",
+                    "description": "Module system"
+                },
+                "typeScriptTarget": {
+                    "type": "string",
+                    "enum": [
+                        "ES2015",
+                        "ES2016",
+                        "ES2017",
+                        "ES2018",
+                        "ES2019",
+                        "ES2020",
+                        "ES2021",
+                        "ES2022",
+                        "ESNext"
+                    ],
+                    "default": "ES2020",
+                    "description": "TypeScript compilation target"
+                }
+            }
+        },
+        "api": {
+            "type": "object",
+            "description": "API client configuration",
+            "properties": {
+                "baseUrl": {
+                    "type": "string",
+                    "description": "Base URL for API requests"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "default": 30000,
+                    "minimum": 0,
+                    "description": "Request timeout in milliseconds"
+                },
+                "authentication": {
+                    "type": "object",
+                    "description": "Authentication configuration",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "enum": [
+                                "Bearer",
+                                "ApiKey",
+                                "None"
+                            ],
+                            "default": "Bearer",
+                            "description": "Authentication type"
+                        },
+                        "storage": {
+                            "type": "string",
+                            "enum": [
+                                "LocalStorage",
+                                "SessionStorage",
+                                "Memory",
+                                "Cookie"
+                            ],
+                            "default": "LocalStorage",
+                            "description": "Token storage location"
+                        },
+                        "tokenKey": {
+                            "type": "string",
+                            "default": "auth_token",
+                            "description": "Storage key for authentication token"
+                        }
+                    }
+                },
+                "csrf": {
+                    "type": "object",
+                    "description": "CSRF protection configuration",
+                    "properties": {
+                        "enabled": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Enable CSRF protection"
+                        },
+                        "tokenEndpoint": {
+                            "type": "string",
+                            "description": "Endpoint to fetch CSRF token"
+                        }
+                    }
+                }
+            }
+        },
+        "features": {
+            "type": "object",
+            "description": "Feature toggles",
+            "properties": {
+                "includeValidation": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Generate validation from FluentValidation rules"
+                },
+                "includeAuthentication": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Generate authentication helpers"
+                },
+                "generateReactHooks": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Generate React hooks (React framework only)"
+                },
+                "generateNextJsHelpers": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Generate Next.js server helpers (Next.js framework only)"
+                }
+            }
+        },
+        "discovery": {
+            "type": "object",
+            "description": "Project and endpoint discovery configuration",
+            "properties": {
+                "autoDiscover": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Automatically discover API projects"
+                },
+                "projectNamePatterns": {
+                    "type": "array",
+                    "description": "Glob patterns for project names to include",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "namespacePatterns": {
+                    "type": "array",
+                    "description": "Glob patterns for namespaces to include",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "advanced": {
+            "type": "object",
+            "description": "Advanced configuration options",
+            "properties": {
+                "customTypeMappings": {
+                    "type": "object",
+                    "description": "Custom C# to TypeScript type mappings",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "excludedEndpoints": {
+                    "type": "array",
+                    "description": "Regex patterns for endpoints to exclude",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "excludedTypes": {
+                    "type": "array",
+                    "description": "Regex patterns for types to exclude",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}

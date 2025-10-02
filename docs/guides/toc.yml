@@ -1,0 +1,8 @@
+- name: Configuration
+  href: configuration.md
+- name: CLI Commands
+  href: cli-commands.md
+- name: Type Mapping
+  href: type-mapping.md
+- name: MSBuild Integration
+  href: msbuild-integration.md

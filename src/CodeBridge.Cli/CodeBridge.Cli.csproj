@@ -1,0 +1,31 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PackageId>CodeBridge.Cli</PackageId>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>codebridge</ToolCommandName>
+    <Description>CodeBridge CLI tool - Generate TypeScript SDKs from .NET APIs</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../CodeBridge.Core/CodeBridge.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" />
+    <PackageReference Include="Microsoft.Extensions.Logging" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+    <None Include="../../Templates/**/*" Pack="true" PackagePath="content/Templates" />
+  </ItemGroup>
+
+</Project>

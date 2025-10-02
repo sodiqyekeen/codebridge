@@ -1,0 +1,63 @@
+{
+    "categories": [
+        {
+            "title": "## 🚀 Features",
+            "labels": [
+                "feature",
+                "enhancement",
+                "feat"
+            ]
+        },
+        {
+            "title": "## 🐛 Bug Fixes",
+            "labels": [
+                "bug",
+                "fix"
+            ]
+        },
+        {
+            "title": "## 📝 Documentation",
+            "labels": [
+                "documentation",
+                "docs"
+            ]
+        },
+        {
+            "title": "## 🔧 Maintenance",
+            "labels": [
+                "chore",
+                "refactor",
+                "dependencies"
+            ]
+        },
+        {
+            "title": "## ⚡ Performance",
+            "labels": [
+                "performance",
+                "perf"
+            ]
+        }
+    ],
+    "ignore_labels": [
+        "ignore",
+        "duplicate",
+        "invalid",
+        "wontfix"
+    ],
+    "sort": "ASC",
+    "template": "${{CHANGELOG}}",
+    "pr_template": "- ${{TITLE}} (#${{NUMBER}})",
+    "empty_template": "- No changes",
+    "label_extractor": [
+        {
+            "pattern": "^feat:",
+            "target": "$1",
+            "flags": "i"
+        },
+        {
+            "pattern": "^fix:",
+            "target": "$1",
+            "flags": "i"
+        }
+    ]
+}

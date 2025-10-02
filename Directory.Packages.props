@@ -1,0 +1,46 @@
+<Project>
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <!-- Code Analysis -->
+        <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+        <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.14.0" />
+
+        <!-- Configuration -->
+        <PackageVersion Include="Microsoft.Extensions.Configuration" Version="9.0.9" />
+        <PackageVersion Include="Microsoft.Extensions.Configuration.Json" Version="9.0.9" />
+        <PackageVersion Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.9" />
+        <PackageVersion Include="Microsoft.Extensions.Configuration.EnvironmentVariables"
+            Version="9.0.9" />
+
+        <!-- Dependency Injection & Hosting -->
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.9" />
+        <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.9" />
+
+        <!-- Logging -->
+        <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.9" />
+        <PackageVersion Include="Microsoft.Extensions.Logging.Console" Version="9.0.9" />
+
+        <!-- CLI -->
+        <PackageVersion Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+
+        <!-- MSBuild -->
+        <PackageVersion Include="Microsoft.Build.Framework" Version="17.14.8" />
+        <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="17.14.8" />
+
+        <!-- File System Watcher -->
+        <PackageVersion Include="Microsoft.Extensions.FileSystemGlobbing" Version="9.0.9" />
+
+        <!-- JSON -->
+        <PackageVersion Include="System.Text.Json" Version="9.0.9" />
+
+        <!-- Testing -->
+        <PackageVersion Include="xunit" Version="2.9.3" />
+        <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+        <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+        <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+        <PackageVersion Include="Moq" Version="4.20.72" />
+    </ItemGroup>
+</Project>

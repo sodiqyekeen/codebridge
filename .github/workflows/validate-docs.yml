@@ -1,0 +1,60 @@
+name: Validate Documentation
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'docs/**'
+      - 'docfx.json'
+      - 'index.md'
+      - 'toc.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      
+      - name: Install DocFX
+        run: dotnet tool install -g docfx
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build projects
+        run: dotnet build --no-restore --configuration Release
+      
+      - name: Validate documentation build
+        run: |
+          docfx metadata docfx.json
+          docfx build docfx.json
+      
+      - name: Check for broken links
+        run: |
+          if grep -r "warning.*InvalidFileLink" docfx.log 2>/dev/null; then
+            echo "⚠️  Warning: Some documentation links may be broken"
+            echo "This is informational only and won't fail the build"
+          fi
+        continue-on-error: true
+      
+      - name: Comment PR with build status
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const status = '${{ job.status }}' === 'success' ? '✅ Documentation builds successfully' : '❌ Documentation build failed';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## Documentation Build Status\n\n${status}`
+            });

@@ -1,0 +1,35 @@
+<Project>
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+
+        <!-- Package Metadata -->
+        <Authors>Sodiq Yekeen</Authors>
+        <Company>Sodiq Yekeen</Company>
+        <Copyright>Copyright © Sodiq Yekeen 2025</Copyright>
+        <PackageProjectUrl>https://github.com/sodiqyekeen/CodeBridge</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/sodiqyekeen/CodeBridge</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageTags>sdk generator typescript react nextjs api-client code-generator dotnet</PackageTags>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <Description>CodeBridge - Generate TypeScript/JavaScript SDKs for React and Next.js from
+            .NET APIs</Description>
+
+        <!-- Version -->
+        <Version>1.0.0-preview.1</Version>
+        <AssemblyVersion>1.0.0.0</AssemblyVersion>
+        <FileVersion>1.0.0.0</FileVersion>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    </PropertyGroup>
+</Project>

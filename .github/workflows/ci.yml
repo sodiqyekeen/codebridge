@@ -1,0 +1,226 @@
+name: Build and Test
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  DOTNET_VERSION: '9.0.x'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+      fail-fast: false
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # For GitVersion
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build (Debug)
+        run: dotnet build --no-restore --configuration Debug
+      
+      - name: Build (Release)
+        run: dotnet build --no-restore --configuration Release
+      
+      - name: Run tests
+        run: dotnet test --no-build --configuration Release --verbosity normal --logger "trx;LogFileName=test-results.trx"
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: '**/test-results.trx'
+      
+      - name: Check for warnings
+        shell: bash
+        run: |
+          if dotnet build --no-restore --configuration Release 2>&1 | grep -i "warning"; then
+            echo "⚠️  Build produced warnings"
+            exit 1
+          fi
+          echo "✅ No warnings detected"
+
+  test-coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+      
+      - name: Run tests with coverage
+        run: dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory ./coverage
+      
+      - name: Generate coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@5.3.8
+        with:
+          reports: 'coverage/**/coverage.cobertura.xml'
+          targetdir: 'coveragereport'
+          reporttypes: 'HtmlInline;Cobertura;MarkdownSummaryGithub'
+      
+      - name: Add coverage summary to PR
+        if: github.event_name == 'pull_request'
+        run: cat coveragereport/SummaryGithub.md >> $GITHUB_STEP_SUMMARY
+      
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coveragereport/
+      
+      - name: Check coverage threshold
+        shell: bash
+        run: |
+          COVERAGE=$(grep -oP 'Line coverage: \K[0-9.]+' coveragereport/Summary.txt || echo "0")
+          echo "Current coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below 70% threshold"
+            exit 1
+          fi
+          echo "✅ Coverage meets threshold"
+
+  pack:
+    name: Pack NuGet Packages
+    runs-on: ubuntu-latest
+    needs: [build]
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+      
+      - name: Pack NuGet packages
+        run: dotnet pack --no-build --configuration Release --output ./artifacts
+      
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/*.nupkg
+      
+      - name: List packages
+        run: |
+          echo "📦 Generated NuGet Packages:"
+          ls -lh artifacts/*.nupkg
+
+  validate-packages:
+    name: Validate NuGet Packages
+    runs-on: ubuntu-latest
+    needs: [pack]
+    
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-packages
+          path: packages
+      
+      - name: Install dotnet-validate
+        run: dotnet tool install -g dotnet-validate --version 0.0.1-preview.304
+      
+      - name: Validate packages
+        run: |
+          for package in packages/*.nupkg; do
+            echo "Validating $package..."
+            dotnet validate package local "$package"
+          done
+      
+      - name: Check package metadata
+        shell: bash
+        run: |
+          for package in packages/*.nupkg; do
+            echo "Checking metadata for $package..."
+            unzip -p "$package" "*.nuspec" | grep -E "(PackageId|Version|Authors|Description)" || true
+          done
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+      
+      - name: Restore dependencies
+        run: dotnet restore
+      
+      - name: Check for vulnerable packages
+        run: dotnet list package --vulnerable --include-transitive 2>&1 | tee vulnerable.txt
+      
+      - name: Fail on vulnerabilities
+        run: |
+          if grep -i "critical\|high" vulnerable.txt; then
+            echo "❌ Found critical or high severity vulnerabilities"
+            exit 1
+          fi
+          echo "✅ No critical vulnerabilities found"
+
+  status-check:
+    name: Build Status
+    runs-on: ubuntu-latest
+    needs: [build, test-coverage, pack, validate-packages, security-scan]
+    if: always()
+    
+    steps:
+      - name: Check build status
+        run: |
+          if [ "${{ needs.build.result }}" != "success" ] || 
+             [ "${{ needs.test-coverage.result }}" != "success" ] ||
+             [ "${{ needs.pack.result }}" != "success" ] ||
+             [ "${{ needs.validate-packages.result }}" != "success" ] ||
+             [ "${{ needs.security-scan.result }}" != "success" ]; then
+            echo "❌ Build pipeline failed"
+            exit 1
+          fi
+          echo "✅ All checks passed!"

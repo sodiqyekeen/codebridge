@@ -1,0 +1,12 @@
+- name: Home
+  href: index.md
+- name: Getting Started
+  href: docs/getting-started/toc.yml
+- name: Guides
+  href: docs/guides/toc.yml
+- name: Examples
+  href: docs/examples/toc.yml
+- name: API Reference
+  href: api/
+- name: GitHub
+  href: https://github.com/YOUR_USERNAME/CodeBridge
