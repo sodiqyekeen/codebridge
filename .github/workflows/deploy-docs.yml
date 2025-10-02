@@ -58,28 +58,35 @@ jobs:
           # Add .nojekyll to prevent Jekyll processing
           touch _site/.nojekyll
           
-          # Ensure lowercase index.html exists
           cd _site
-          if [ -f INDEX.html ] && [ ! -f index.html ]; then
-            cp INDEX.html index.html
+          
+          # Remove INDEX.md from tracking if it exists
+          rm -f INDEX.md
+          
+          # Ensure lowercase index.html exists (DocFX should generate this from index.md)
+          if [ ! -f index.html ]; then
+            echo "⚠️  index.html not found, checking for alternatives..."
+            ls -la *.html 2>/dev/null || true
+            
+            # If README.html exists but not index.html, use it as index
+            if [ -f README.html ] && [ ! -f index.html ]; then
+              echo "Using README.html as index.html"
+              cp README.html index.html
+            else
+              echo "ERROR: No suitable index file found"
+              exit 1
+            fi
           fi
           
-          # Remove index.json from root to avoid conflicts
+          # Move index.json to data folder to avoid conflicts
           if [ -f index.json ]; then
             mkdir -p data
             mv index.json data/index.json
           fi
           
-          # Verify index.html exists
-          if [ ! -f index.html ]; then
-            echo "ERROR: index.html not found in _site/"
-            ls -la
-            exit 1
-          fi
-          
           echo "✅ GitHub Pages deployment prepared"
-          echo "Files in _site root:"
-          ls -la | head -20
+          echo "Root HTML files:"
+          ls -la *.html 2>/dev/null || echo "No HTML files found"
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

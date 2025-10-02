@@ -118,7 +118,6 @@ build-docs.sh
 publish-docs.sh
 
 # Personal documentation files
-INDEX.md
 .gitignore-docs
 
 # Example project generated files
