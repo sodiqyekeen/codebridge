@@ -53,15 +53,33 @@ jobs:
       - name: Build documentation
         run: docfx build docfx.json
       
-      - name: Add .nojekyll file
-        run: touch _site/.nojekyll
-      
-      - name: Create index.html symlink
+      - name: Prepare GitHub Pages deployment
         run: |
+          # Add .nojekyll to prevent Jekyll processing
+          touch _site/.nojekyll
+          
+          # Ensure lowercase index.html exists
           cd _site
           if [ -f INDEX.html ] && [ ! -f index.html ]; then
             cp INDEX.html index.html
           fi
+          
+          # Remove index.json from root to avoid conflicts
+          if [ -f index.json ]; then
+            mkdir -p data
+            mv index.json data/index.json
+          fi
+          
+          # Verify index.html exists
+          if [ ! -f index.html ]; then
+            echo "ERROR: index.html not found in _site/"
+            ls -la
+            exit 1
+          fi
+          
+          echo "✅ GitHub Pages deployment prepared"
+          echo "Files in _site root:"
+          ls -la | head -20
       
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
