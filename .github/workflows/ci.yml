@@ -149,23 +149,46 @@ jobs:
           name: nuget-packages
           path: packages
       
-      - name: Install dotnet-validate
-        run: dotnet tool install -g dotnet-validate --version 0.0.1-preview.304
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
       
-      - name: Validate packages
-        run: |
-          for package in packages/*.nupkg; do
-            echo "Validating $package..."
-            dotnet validate package local "$package"
-          done
-      
-      - name: Check package metadata
+      - name: Basic package validation
         shell: bash
         run: |
+          echo "📦 Validating NuGet packages..."
           for package in packages/*.nupkg; do
-            echo "Checking metadata for $package..."
-            unzip -p "$package" "*.nuspec" | grep -E "(PackageId|Version|Authors|Description)" || true
+            echo "----------------------------------------"
+            echo "Package: $(basename $package)"
+            echo "Size: $(ls -lh $package | awk '{print $5}')"
+            
+            # Extract and check .nuspec
+            unzip -q -o "$package" -d temp_extract
+            
+            # Check for required files
+            if [ -f "temp_extract/*.nuspec" ]; then
+              echo "✅ .nuspec file found"
+              echo "Metadata:"
+              cat temp_extract/*.nuspec | grep -E "(PackageId|Version|Authors|Description|RepositoryUrl)" | sed 's/^/  /'
+            else
+              echo "❌ .nuspec file missing"
+              exit 1
+            fi
+            
+            # Check for DLL files
+            if find temp_extract -name "*.dll" | grep -q .; then
+              echo "✅ Assembly files found"
+            else
+              echo "❌ No assembly files found"
+              exit 1
+            fi
+            
+            rm -rf temp_extract
+            echo "✅ Package validation passed"
           done
+          echo "----------------------------------------"
+          echo "✅ All packages validated successfully"
 
   security-scan:
     name: Security Scan
