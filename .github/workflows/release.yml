@@ -68,11 +68,21 @@ jobs:
       - name: Generate changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v4
+        continue-on-error: true
         with:
           configuration: ".github/changelog-config.json"
           failOnError: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set default changelog for first release
+        id: default_changelog
+        run: |
+          if [ -z "${{ steps.changelog.outputs.changelog }}" ]; then
+            echo "changelog=🎉 Initial preview release of CodeBridge!" >> $GITHUB_OUTPUT
+          else
+            echo "changelog=${{ steps.changelog.outputs.changelog }}" >> $GITHUB_OUTPUT
+          fi
       
       - name: Create GitHub Release
         id: create_release
@@ -101,15 +111,13 @@ jobs:
             
             ### 📝 What's Changed
             
-            ${{ steps.changelog.outputs.changelog }}
+            ${{ steps.default_changelog.outputs.changelog }}
             
             ### 📚 Documentation
             
-            - [Getting Started](https://YOUR_USERNAME.github.io/CodeBridge/docs/getting-started/installation.html)
-            - [Configuration Guide](https://YOUR_USERNAME.github.io/CodeBridge/docs/guides/configuration.html)
-            - [API Reference](https://YOUR_USERNAME.github.io/CodeBridge/api/)
-            
-            **Full Changelog**: https://github.com/${{ github.repository }}/compare/v${{ steps.version.outputs.previous_tag }}...v${{ steps.version.outputs.version }}
+            - [Getting Started](https://sodiqyekeen.github.io/codebridge/docs/getting-started/installation.html)
+            - [Configuration Guide](https://sodiqyekeen.github.io/codebridge/docs/guides/configuration.html)
+            - [API Reference](https://sodiqyekeen.github.io/codebridge/api/)
           files: artifacts/*.nupkg
           draft: false
           prerelease: ${{ github.event.inputs.prerelease || false }}
@@ -126,7 +134,8 @@ jobs:
     name: Publish to NuGet.org
     runs-on: ubuntu-latest
     needs: [create-release]
-    if: github.event.inputs.prerelease != 'true'
+    # Publish preview releases too
+    # if: github.event.inputs.prerelease != 'true'
     
     steps:
       - name: Download artifacts
@@ -222,7 +231,7 @@ jobs:
             \`\`\`
             
             📚 [Release Notes](https://github.com/${{ github.repository }}/releases/tag/v${version})
-            📖 [Documentation](https://YOUR_USERNAME.github.io/CodeBridge/)
+            📖 [Documentation](https://sodiqyekeen.github.io/codebridge/)
             `;
             
             // Post to discussions if enabled

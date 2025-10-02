@@ -1,0 +1,56 @@
+# Dependabot configuration for CodeBridge
+# Automatically creates PRs to keep dependencies up to date
+
+version: 2
+updates:
+  # NuGet dependencies
+  - package-ecosystem: "nuget"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    reviewers:
+      - "sodiqyekeen"
+    labels:
+      - "dependencies"
+      - "nuget"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      # Group Microsoft packages together
+      microsoft:
+        patterns:
+          - "Microsoft.*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group test packages together
+      test-dependencies:
+        patterns:
+          - "xunit*"
+          - "Moq"
+          - "coverlet*"
+          - "Microsoft.NET.Test.Sdk"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    reviewers:
+      - "sodiqyekeen"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
