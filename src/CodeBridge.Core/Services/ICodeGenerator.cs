@@ -66,5 +66,6 @@ public interface ICodeGenerator
         string groupName,
         List<EndpointInfo> endpoints,
         bool includeValidation = true,
+        Dictionary<string, List<PropertyValidationRules>>? validationRules = null,
         CancellationToken cancellationToken = default);
 }

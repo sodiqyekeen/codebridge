@@ -218,6 +218,7 @@ public sealed class GenerateCommand : Command
                 group.Key,
                 group.ToList(),
                 config.Features.IncludeValidation,
+                validationRules,
                 cancellationToken);
             await File.WriteAllTextAsync(Path.Combine(apiDir, groupFileName), groupContent, cancellationToken);
         }

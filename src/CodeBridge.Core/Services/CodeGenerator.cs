@@ -191,8 +191,8 @@ public sealed class CodeGenerator : ICodeGenerator
 
         sb.AppendLine($"export async function {functionName}({parameters}): Promise<{returnType}> {{");
 
-        // Generate function body
-        if (includeValidation && _includeValidation && endpoint.RequestType != null)
+        // Generate function body - validate only if this endpoint has validation rules
+        if (includeValidation && endpoint.RequestType != null)
         {
             sb.AppendLine($"  // Validate request");
             sb.AppendLine($"  validate{endpoint.RequestType.Name}Schema(data);");
@@ -994,6 +994,7 @@ public sealed class CodeGenerator : ICodeGenerator
         string groupName,
         List<EndpointInfo> endpoints,
         bool includeValidation = true,
+        Dictionary<string, List<PropertyValidationRules>>? validationRules = null,
         CancellationToken cancellationToken = default)
     {
         var sb = new StringBuilder();
@@ -1003,19 +1004,37 @@ public sealed class CodeGenerator : ICodeGenerator
 
         // Collect all unique types used in this file
         var usedTypes = new HashSet<string>();
+        var validationImports = new HashSet<string>();
+
         foreach (var endpoint in endpoints)
         {
             if (endpoint.RequestType != null)
-                usedTypes.Add(endpoint.RequestType.Name);
+            {
+                ExtractTypeNames(endpoint.RequestType.Name, usedTypes);
+
+                // Only add validation import if this type has validation rules
+                if (includeValidation && validationRules != null &&
+                    validationRules.ContainsKey(endpoint.RequestType.Name))
+                {
+                    validationImports.Add($"validate{endpoint.RequestType.Name}Schema");
+                }
+            }
             if (endpoint.ResponseType != null)
-                usedTypes.Add(endpoint.ResponseType.Name);
+                ExtractTypeNames(endpoint.ResponseType.Name, usedTypes);
         }
 
         // Add type imports
         if (usedTypes.Count > 0)
         {
-            var typeImports = string.Join(", ", usedTypes.Select(t => t));
+            var typeImports = string.Join(", ", usedTypes.OrderBy(t => t));
             sb.AppendLine($"import type {{ {typeImports} }} from '../types';");
+        }
+
+        // Add validation imports
+        if (validationImports.Count > 0)
+        {
+            var validationImportList = string.Join(", ", validationImports.OrderBy(v => v));
+            sb.AppendLine($"import {{ {validationImportList} }} from '../validation';");
         }
 
         sb.AppendLine();
@@ -1023,12 +1042,76 @@ public sealed class CodeGenerator : ICodeGenerator
         // Generate functions
         foreach (var endpoint in endpoints)
         {
-            var functionCode = await GenerateApiClientFunctionAsync(endpoint, includeValidation, cancellationToken);
+            var hasValidation = includeValidation && validationRules != null &&
+                               endpoint.RequestType != null &&
+                               validationRules.ContainsKey(endpoint.RequestType.Name);
+            var functionCode = await GenerateApiClientFunctionAsync(endpoint, hasValidation, cancellationToken);
             sb.AppendLine(functionCode);
             sb.AppendLine();
         }
 
         return sb.ToString();
+    }
+
+    private static void ExtractTypeNames(string typeName, HashSet<string> types)
+    {
+        if (string.IsNullOrEmpty(typeName))
+            return;
+
+        // Extract type names from generic types like Result<InitiateLoginResponse>
+        // Should extract: Result, InitiateLoginResponse
+
+        var match = System.Text.RegularExpressions.Regex.Match(typeName, @"^([^<]+)<(.+)>$");
+        if (match.Success)
+        {
+            // Add the generic type name (e.g., Result)
+            var genericType = match.Groups[1].Value.Trim();
+            if (!string.IsNullOrEmpty(genericType))
+                types.Add(genericType);
+
+            // Add the inner type(s) (e.g., InitiateLoginResponse)
+            var innerTypes = match.Groups[2].Value;
+
+            // Handle nested generics and multiple type parameters
+            var depth = 0;
+            var currentType = new System.Text.StringBuilder();
+
+            foreach (var ch in innerTypes)
+            {
+                if (ch == '<')
+                {
+                    depth++;
+                    currentType.Append(ch);
+                }
+                else if (ch == '>')
+                {
+                    depth--;
+                    currentType.Append(ch);
+                }
+                else if (ch == ',' && depth == 0)
+                {
+                    // End of current type parameter
+                    var typeParam = currentType.ToString().Trim();
+                    if (!string.IsNullOrEmpty(typeParam))
+                        ExtractTypeNames(typeParam, types);
+                    currentType.Clear();
+                }
+                else
+                {
+                    currentType.Append(ch);
+                }
+            }
+
+            // Add the last type
+            var lastType = currentType.ToString().Trim();
+            if (!string.IsNullOrEmpty(lastType))
+                ExtractTypeNames(lastType, types);
+        }
+        else
+        {
+            // Simple type name (no generics)
+            types.Add(typeName.Trim());
+        }
     }
 
     #endregion

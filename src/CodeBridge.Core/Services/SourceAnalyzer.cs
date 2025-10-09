@@ -886,7 +886,8 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
                typeName == "CancellationToken" ||
                typeName == "HttpContext" ||
                typeName == "HttpRequest" ||
-               typeName == "HttpResponse";
+               typeName == "HttpResponse" ||
+               typeName.StartsWith("I") && typeName.EndsWith("Service");  // Skip service interfaces like ICurrentUserService
     }
 
     private List<EndpointInfo> ApplyEndpointFilters(List<EndpointInfo> endpoints)
