@@ -39,4 +39,14 @@ public class FeatureOptions
     /// Generate README file with usage examples.
     /// </summary>
     public bool GenerateReadme { get; set; } = true;
+
+    /// <summary>
+    /// Include CSRF token support in HTTP client.
+    /// </summary>
+    public bool IncludeCsrf { get; set; } = true;
+
+    /// <summary>
+    /// Include file upload/download operations.
+    /// </summary>
+    public bool IncludeFileOperations { get; set; } = true;
 }

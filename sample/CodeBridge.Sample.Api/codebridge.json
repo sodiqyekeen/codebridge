@@ -1,0 +1,13 @@
+{
+    "solutionPath": "./CodeBridge.Sample.Api.csproj",
+    "outputPath": "./generated-sdk",
+    "baseUrl": "https://localhost:5001",
+    "httpClient": "axios",
+    "generateInterfaces": true,
+    "generateEnums": true,
+    "generateReactHooks": true,
+    "includeAuthentication": false,
+    "packageName": "@codebridge/sample-sdk",
+    "packageVersion": "1.0.0",
+    "framework": "react"
+}

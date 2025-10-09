@@ -976,7 +976,7 @@ public sealed class CodeGenerator : ICodeGenerator
         sb.AppendLine("      window.location.href = '/login';");
         sb.AppendLine("    }");
         sb.AppendLine("  },");
-        sb.AppendLine("  onTokenRefreshed: (token) => {");
+        sb.AppendLine("  onTokenRefreshed: (_token) => {");
         sb.AppendLine("    console.log('Token refreshed successfully');");
         sb.AppendLine("  },");
         sb.AppendLine("});");
@@ -1021,7 +1021,20 @@ public sealed class CodeGenerator : ICodeGenerator
             }
             if (endpoint.ResponseType != null)
                 ExtractTypeNames(endpoint.ResponseType.Name, usedTypes);
+
+            // Extract types from return type (e.g., Result<void>, Result<User>, etc.)
+            var returnType = GenerateReturnType(endpoint);
+            if (!string.IsNullOrEmpty(returnType))
+                ExtractTypeNames(returnType, usedTypes);
         }
+
+        // Remove framework types that shouldn't be imported
+        usedTypes.Remove("IResult");
+        usedTypes.Remove("void");
+        usedTypes.Remove("any");
+        usedTypes.Remove("string");
+        usedTypes.Remove("number");
+        usedTypes.Remove("boolean");
 
         // Add type imports
         if (usedTypes.Count > 0)
@@ -1109,9 +1122,36 @@ public sealed class CodeGenerator : ICodeGenerator
         }
         else
         {
-            // Simple type name (no generics)
-            types.Add(typeName.Trim());
+            // Simple type name (no generics) - but first clean it up
+            var cleanedName = CleanupTypeName(typeName);
+            types.Add(cleanedName.Trim());
         }
+    }
+
+    private static string CleanupTypeName(string typeName)
+    {
+        if (string.IsNullOrEmpty(typeName))
+            return typeName;
+
+        // Remove array suffix (User[] -> User)
+        typeName = typeName.TrimEnd('[', ']');
+
+        // Remove incomplete generic brackets (e.g., "Result<CompletePasswordResetResponse" -> "Result")
+        // Count brackets to see if they're balanced
+        var openCount = typeName.Count(c => c == '<');
+        var closeCount = typeName.Count(c => c == '>');
+        
+        if (openCount != closeCount)
+        {
+            // Malformed - extract just the base type name
+            var firstBracket = typeName.IndexOf('<');
+            if (firstBracket > 0)
+            {
+                return typeName.Substring(0, firstBracket);
+            }
+        }
+
+        return typeName;
     }
 
     #endregion

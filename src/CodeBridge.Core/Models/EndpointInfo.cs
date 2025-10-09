@@ -76,6 +76,11 @@ public class EndpointInfo
     public bool IsFileUpload { get; init; }
 
     /// <summary>
+    /// Name of the type marked with [AsParameters] attribute (for query parameter expansion).
+    /// </summary>
+    public string? AsParametersType { get; init; }
+
+    /// <summary>
     /// Generated function name for SDK.
     /// </summary>
     public string FunctionName => GenerateFunctionName();

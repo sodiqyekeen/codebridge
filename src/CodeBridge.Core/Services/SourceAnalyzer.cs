@@ -75,11 +75,31 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             var syntaxTree = CSharpSyntaxTree.ParseText(sourceCode, cancellationToken: cancellationToken);
             var root = await syntaxTree.GetRootAsync(cancellationToken);
 
-            // Find all methods with [GenerateSdk] attribute
-            var methodsWithAttribute = root.DescendantNodes()
+            // Find all methods with [GenerateSdk] attribute (including local functions)
+            var methodsWithAttribute = new List<MethodDeclarationSyntax>();
+
+            // Find top-level methods
+            methodsWithAttribute.AddRange(root.DescendantNodes()
                 .OfType<MethodDeclarationSyntax>()
-                .Where(HasGenerateSdkAttribute)
+                .Where(HasGenerateSdkAttribute));
+
+            // Find local functions with [GenerateSdk] attribute and process them
+            var localFunctions = root.DescendantNodes()
+                .OfType<LocalFunctionStatementSyntax>()
+                .Where(lf => lf.AttributeLists
+                    .SelectMany(al => al.Attributes)
+                    .Any(IsGenerateSdkAttribute))
                 .ToList();
+
+            // Process local functions separately since they have different syntax
+            foreach (var localFunc in localFunctions)
+            {
+                var endpoint = ExtractEndpointFromLocalFunction(localFunc, syntaxTree, cancellationToken);
+                if (endpoint != null)
+                {
+                    endpoints.Add(endpoint);
+                }
+            }
 
             if (methodsWithAttribute.Count == 0)
                 return endpoints;
@@ -129,6 +149,189 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
                attributeName == "GenerateSdkAttribute" ||
                attributeName == "CodeBridge.Core.Attributes.GenerateSdk" ||
                attributeName == "CodeBridge.Core.Attributes.GenerateSdkAttribute";
+    }
+
+    private EndpointInfo? ExtractEndpointFromLocalFunction(
+        LocalFunctionStatementSyntax localFunc,
+        SyntaxTree syntaxTree,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var methodName = localFunc.Identifier.ValueText;
+
+            // Find the containing class for context
+            var containingClass = localFunc.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault();
+            var className = containingClass?.Identifier.ValueText ?? "Unknown";
+
+            // For local functions, we need to infer the HTTP method and route from the method name
+            var httpMethod = InferHttpMethodFromName(methodName);
+            if (httpMethod == null)
+            {
+                _logger.LogWarning("Cannot infer HTTP method for local function: {Method}", methodName);
+                return null;
+            }
+
+            // Infer route from method name
+            var route = InferRouteFromMethodName(methodName);
+
+            // Extract request/response types from method signature
+            var (requestType, responseType) = ExtractTypesFromLocalFunctionSignature(localFunc);
+            var asParametersType = ExtractAsParametersTypeNameFromLocalFunction(localFunc);
+
+            // Try to find the endpoint mapping call (e.g., app.MapGet("/users", GetUsers).Produces<User[]>())
+            var mappingMetadata = FindEndpointMappingMetadata(methodName, syntaxTree);
+
+            // Use response type from .Produces<T>() if available, otherwise from method signature
+            var finalResponseType = mappingMetadata?.ResponseType ?? responseType;
+
+            var endpoint = new EndpointInfo
+            {
+                HttpMethod = httpMethod,
+                Route = route,
+                ControllerName = className.Replace("Endpoints", ""),
+                ActionName = methodName,
+                RequiresAuthentication = true,
+                RequestType = requestType,
+                ResponseType = finalResponseType,
+                AsParametersType = asParametersType
+            };
+
+            // Extract metadata from [GenerateSdk] attribute
+            return ExtractSdkAttributeMetadataFromLocalFunction(localFunc, endpoint);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting endpoint from local function: {Method}", localFunc.Identifier.ValueText);
+            return null;
+        }
+    }
+
+    private (TypeInfo? requestType, TypeInfo? responseType) ExtractTypesFromLocalFunctionSignature(LocalFunctionStatementSyntax localFunc)
+    {
+        TypeInfo? requestType = null;
+        TypeInfo? responseType = null;
+
+        // Extract request type from first non-framework parameter
+        var parameters = localFunc.ParameterList.Parameters;
+        foreach (var param in parameters)
+        {
+            var paramType = param.Type?.ToString();
+            if (string.IsNullOrEmpty(paramType))
+                continue;
+            if (IsBuiltInType(paramType) || IsFrameworkType(paramType) || paramType.Contains("Dispatcher") || paramType.Contains("CancellationToken"))
+                continue;
+            requestType = new TypeInfo
+            {
+                Name = paramType,
+                FullName = paramType,
+                Namespace = null,
+                IsEnum = false,
+                Properties = [],
+                IsGeneric = false,
+                GenericArguments = []
+            };
+            break;
+        }
+
+        // Try to extract response type from return type
+        var returnType = localFunc.ReturnType?.ToString();
+        if (!string.IsNullOrEmpty(returnType))
+        {
+            var extractedType = ExtractTypeFromGeneric(returnType, "Task", "IResult", "Result");
+            if (!string.IsNullOrEmpty(extractedType) && !IsFrameworkType(extractedType) && !IsBuiltInType(extractedType))
+            {
+                responseType = new TypeInfo
+                {
+                    Name = extractedType,
+                    FullName = extractedType,
+                    Namespace = null,
+                    IsEnum = false,
+                    Properties = [],
+                    IsGeneric = false,
+                    GenericArguments = []
+                };
+            }
+        }
+
+        return (requestType, responseType);
+    }
+
+    private static EndpointInfo ExtractSdkAttributeMetadataFromLocalFunction(LocalFunctionStatementSyntax localFunc, EndpointInfo endpoint)
+    {
+        var sdkAttribute = localFunc.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .FirstOrDefault(IsGenerateSdkAttribute);
+
+        if (sdkAttribute?.ArgumentList?.Arguments == null)
+            return endpoint;
+
+        // Extract attribute properties
+        string? summary = endpoint.Summary;
+        string? group = null;
+        bool requiresAuth = endpoint.RequiresAuthentication;
+        List<string> tags = new();
+        bool isFileDownload = false;
+        bool isFileUpload = false;
+
+        foreach (var argument in sdkAttribute.ArgumentList.Arguments)
+        {
+            if (argument.NameEquals == null)
+                continue;
+
+            var propertyName = argument.NameEquals.Name.Identifier.ValueText;
+            var value = ExtractAttributeValue(argument.Expression);
+
+            switch (propertyName)
+            {
+                case "Summary":
+                    if (value is string s)
+                        summary = s;
+                    break;
+
+                case "Group":
+                    if (value is string g)
+                        group = g;
+                    break;
+
+                case "RequiresAuth":
+                    if (value is bool ra)
+                        requiresAuth = ra;
+                    break;
+
+                case "Tags":
+                    if (value is string[] t)
+                        tags = t.ToList();
+                    break;
+
+                case "IsFileDownload":
+                    if (value is bool ifd)
+                        isFileDownload = ifd;
+                    break;
+
+                case "IsFileUpload":
+                    if (value is bool ifu)
+                        isFileUpload = ifu;
+                    break;
+            }
+        }
+
+        // Return new EndpointInfo with updated values
+        return new EndpointInfo
+        {
+            HttpMethod = endpoint.HttpMethod,
+            Route = endpoint.Route,
+            ControllerName = endpoint.ControllerName,
+            ActionName = endpoint.ActionName,
+            RequestType = endpoint.RequestType,
+            ResponseType = endpoint.ResponseType,
+            RequiresAuthentication = requiresAuth,
+            Summary = summary,
+            Group = group,
+            Tags = tags,
+            IsFileDownload = isFileDownload,
+            IsFileUpload = isFileUpload
+        };
     }
 
     private EndpointInfo? ExtractEndpointFromMethod(
@@ -194,6 +397,7 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
 
         // Extract request/response types from method signature
         var (requestType, responseType) = ExtractTypesFromMethodSignature(method);
+        var asParametersType = ExtractAsParametersTypeName(method);
 
         var endpoint = new EndpointInfo
         {
@@ -203,7 +407,8 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             ActionName = method.Identifier.ValueText,
             RequiresAuthentication = true, // Default, can be overridden by [GenerateSdk] attribute
             RequestType = requestType,
-            ResponseType = responseType
+            ResponseType = responseType,
+            AsParametersType = asParametersType
         };
 
         return endpoint;
@@ -232,6 +437,7 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
 
         // Extract request/response types from method signature
         var (requestType, responseType) = ExtractTypesFromMethodSignature(method);
+        var asParametersType = ExtractAsParametersTypeName(method);
 
         var endpoint = new EndpointInfo
         {
@@ -241,7 +447,8 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             ActionName = methodName,
             RequiresAuthentication = true,
             RequestType = requestType,
-            ResponseType = responseType
+            ResponseType = responseType,
+            AsParametersType = asParametersType
         };
 
         return endpoint;
@@ -442,6 +649,9 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             var (requestType, responseType) = handlerMethod != null
                 ? ExtractTypesFromMethodSignature(handlerMethod)
                 : (null, metadata.ResponseType);
+            var asParametersType = handlerMethod != null
+                ? ExtractAsParametersTypeName(handlerMethod)
+                : null;
 
             return new EndpointInfo
             {
@@ -457,7 +667,8 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
                 ResponseType = responseType ?? metadata.ResponseType,
                 RequiresAuthentication = metadata.RequiresAuth,
                 Summary = metadata.Summary,
-                Tags = metadata.Tags
+                Tags = metadata.Tags,
+                AsParametersType = asParametersType
             };
         }
         catch (Exception ex)
@@ -578,6 +789,78 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         return tags;
     }
 
+    private EndpointMappingMetadata? FindEndpointMappingMetadata(string localFunctionName, SyntaxTree syntaxTree)
+    {
+        // Find invocations where this local function is referenced (e.g., app.MapGet("/users", GetUsers))
+        var root = syntaxTree.GetRoot();
+
+        // Look for the full expression statement containing the MapGet/MapPost call
+        var expressionStatements = root.DescendantNodes().OfType<ExpressionStatementSyntax>();
+
+        foreach (var statement in expressionStatements)
+        {
+            // Check if this statement contains our local function reference
+            var identifiers = statement.DescendantNodes().OfType<IdentifierNameSyntax>();
+            var hasLocalFunction = identifiers.Any(id => id.Identifier.ValueText == localFunctionName);
+
+            if (hasLocalFunction)
+            {
+                // Check if this is a MapGet/MapPost chain
+                var invocations = statement.DescendantNodes().OfType<InvocationExpressionSyntax>();
+                var mapInvocation = invocations.FirstOrDefault(inv =>
+                {
+                    if (inv.Expression is MemberAccessExpressionSyntax memberAccess)
+                    {
+                        var methodName = memberAccess.Name.Identifier.ValueText;
+                        return methodName is "MapGet" or "MapPost" or "MapPut" or "MapDelete" or "MapPatch";
+                    }
+                    return false;
+                });
+
+                if (mapInvocation != null)
+                {
+                    // Extract metadata from all invocations in this statement
+                    return ExtractMetadataFromStatement(statement);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private EndpointMappingMetadata? ExtractMetadataFromStatement(ExpressionStatementSyntax statement)
+    {
+        var metadata = new EndpointMappingMetadata();
+
+        // Find all .Produces<T>() calls in this statement
+        var invocations = statement.DescendantNodes().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                var methodName = memberAccess.Name.Identifier.ValueText;
+
+                if (methodName == "Produces")
+                {
+                    // Only set ResponseType from first .Produces<T>() with a type argument
+                    var producesType = ExtractProducesType(invocation);
+                    if (producesType != null && metadata.ResponseType == null)
+                    {
+                        metadata.ResponseType = producesType;
+                    }
+                }
+            }
+        }
+
+        return metadata.ResponseType != null ? metadata : null;
+    }
+
+    private class EndpointMappingMetadata
+    {
+        public TypeInfo? ResponseType { get; set; }
+    }
+
     private TypeInfo? ExtractProducesType(InvocationExpressionSyntax invocation)
     {
         // Extract type from generic method: .Produces<ApiResponse<Result<LoginResponse>>>()
@@ -592,9 +875,11 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
                 // Strip ApiResponse wrapper: ApiResponse<Result<T>> -> Result<T>
                 var innerType = ExtractTypeFromGeneric(typeName, "ApiResponse");
 
-                // Keep Result<T> as-is (it's the actual type name we want)
+                // Keep Result<T> as-is or use the extracted inner type
                 var finalType = innerType ?? typeName;
 
+                // Note: Don't strip [] here - TypeMapper expects "User[]" format
+                // The full type with [] will be used for TypeScript generation
                 return new TypeInfo
                 {
                     Name = finalType,
@@ -754,6 +1039,7 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
     {
         TypeInfo? requestType = null;
         TypeInfo? responseType = null;
+        string? asParametersTypeName = null;
 
         // Extract request type from first non-framework parameter
         var parameters = method.ParameterList.Parameters;
@@ -764,6 +1050,15 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
                 continue;
             if (IsBuiltInType(paramType) || IsFrameworkType(paramType) || paramType.Contains("Dispatcher") || paramType.Contains("CancellationToken"))
                 continue;
+
+            // Check for [AsParameters] attribute
+            if (HasAsParametersAttribute(param))
+            {
+                asParametersTypeName = paramType;
+                // Don't set as requestType since it's a query parameter container
+                continue;
+            }
+
             requestType = new TypeInfo
             {
                 Name = paramType,
@@ -996,7 +1291,7 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
                     continue;
 
                 // Check if type should be included
-                if (!ShouldIncludeType(fullName))
+                if (!ShouldIncludeType(fullName, typeDecl))
                     continue;
 
                 processedTypes.Add(fullName);
@@ -1016,16 +1311,45 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         return types;
     }
 
-    private static bool ShouldIncludeType(string fullName)
+    private static bool ShouldIncludeType(string fullName, SyntaxNode typeDeclaration)
     {
-        // Include types that are likely API-related
-        var includePatterns = new[]
+        var typeName = typeDeclaration switch
         {
-            "Command", "Query", "Request", "Response",
-            "Dto", "Model", "Result", "Error"
+            ClassDeclarationSyntax classDecl => classDecl.Identifier.ValueText,
+            RecordDeclarationSyntax recordDecl => recordDecl.Identifier.ValueText,
+            EnumDeclarationSyntax enumDecl => enumDecl.Identifier.ValueText,
+            _ => string.Empty
         };
 
-        return includePatterns.Any(pattern => fullName.Contains(pattern));
+        if (string.IsNullOrEmpty(typeName))
+            return false;
+
+        // Exclude patterns for internal/infrastructure types that should never be in an SDK
+        var excludePatterns = new[]
+        {
+            "Handler", "Validator", "Service", "Repository", "Context",
+            "Configuration", "Behavior", "Middleware", "IQuery", "ICommand",
+            "Options", "Builder", "Factory", "Provider", "Manager",
+            "Processor", "Mapper", "DbContext", "Migration", "Seeder",
+            "BackgroundJob", "HostedService", "Worker", "Filter",
+            "IRequest", "INotification", "MediatR"
+        };
+
+        // Check if type name contains exclude patterns
+        var shouldExclude = excludePatterns.Any(pattern =>
+            typeName.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+
+        // Always include enums (unless explicitly excluded)
+        if (typeDeclaration is EnumDeclarationSyntax)
+            return !shouldExclude;
+
+        // Always include record types - they're typically DTOs (unless explicitly excluded)
+        if (typeDeclaration is RecordDeclarationSyntax)
+            return !shouldExclude;
+
+        // For classes, be permissive - include unless explicitly excluded
+        // This allows maximum flexibility for different project structures
+        return !shouldExclude;
     }
 
     private TypeInfo? ConvertToTypeInfo(INamedTypeSymbol typeSymbol)
@@ -1371,6 +1695,46 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         return null;
     }
 
+    /// <summary>
+    /// Checks if a parameter has the [AsParameters] attribute.
+    /// </summary>
+    private static bool HasAsParametersAttribute(ParameterSyntax parameter)
+    {
+        return parameter.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Any(attr => attr.Name.ToString().Contains("AsParameters"));
+    }
+
+    /// <summary>
+    /// Extracts the type name of a parameter decorated with [AsParameters] attribute.
+    /// </summary>
+    private static string? ExtractAsParametersTypeName(MethodDeclarationSyntax method)
+    {
+        foreach (var param in method.ParameterList.Parameters)
+        {
+            if (HasAsParametersAttribute(param))
+            {
+                return param.Type?.ToString();
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Extracts the type name of a parameter decorated with [AsParameters] attribute from a local function.
+    /// </summary>
+    private static string? ExtractAsParametersTypeNameFromLocalFunction(LocalFunctionStatementSyntax localFunc)
+    {
+        foreach (var param in localFunc.ParameterList.Parameters)
+        {
+            if (HasAsParametersAttribute(param))
+            {
+                return param.Type?.ToString();
+            }
+        }
+        return null;
+    }
+
     #endregion
 
     #region Parameter Extraction
@@ -1410,6 +1774,32 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             });
 
         parameters.AddRange(routeParams);
+
+        // Expand [AsParameters] type into individual query parameters
+        if (!string.IsNullOrEmpty(endpoint.AsParametersType))
+        {
+            var asParamsType = availableTypes.FirstOrDefault(t =>
+                t.Name == endpoint.AsParametersType ||
+                t.FullName == endpoint.AsParametersType);
+
+            if (asParamsType != null)
+            {
+                foreach (var property in asParamsType.Properties)
+                {
+                    parameters.Add(new ParameterInfo
+                    {
+                        Name = ToCamelCase(property.Name),
+                        Type = property.Type,
+                        IsRequired = property.IsRequired,
+                        Source = ParameterSource.Query
+                    });
+                }
+            }
+            else
+            {
+                _logger.LogWarning("Could not find AsParameters type: {TypeName}", endpoint.AsParametersType);
+            }
+        }
 
         // Add request body parameter if request type is specified
         if (endpoint.RequestType != null)

@@ -41,6 +41,21 @@ public class OutputOptions
     public string? Repository { get; set; }
 
     /// <summary>
+    /// Homepage URL.
+    /// </summary>
+    public string? Homepage { get; set; }
+
+    /// <summary>
+    /// Package version (alternative to PackageVersion for consistency).
+    /// </summary>
+    public string? Version => PackageVersion;
+
+    /// <summary>
+    /// Whether to include contributing guidelines in README.
+    /// </summary>
+    public bool IncludeContributing { get; set; } = false;
+
+    /// <summary>
     /// Clean output directory before generation.
     /// </summary>
     public bool CleanBeforeGenerate { get; set; } = true;

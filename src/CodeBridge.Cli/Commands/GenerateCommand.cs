@@ -139,6 +139,10 @@ public sealed class GenerateCommand : Command
         var endpoints = await sourceAnalyzer.DiscoverEndpointsAsync(projects, cancellationToken);
         var types = await sourceAnalyzer.DiscoverTypesAsync(projects, cancellationToken);
 
+        // Add types referenced in endpoint response types that weren't discovered
+        var referencedTypes = await ExtractReferencedTypesFromEndpointsAsync(endpoints, types, sourceAnalyzer, projects, cancellationToken);
+        types.AddRange(referencedTypes);
+
         logger.LogInformation("   ✓ Found {EndpointCount} endpoints", endpoints.Count);
         logger.LogInformation("   ✓ Found {TypeCount} types", types.Count);
 
@@ -181,6 +185,22 @@ public sealed class GenerateCommand : Command
         var typesDir = Path.Combine(outputPath, "types");
         Directory.CreateDirectory(typesDir);
 
+        // Generate built-in Result<T> type first
+        var resultTypeContent = @"/**
+ * Generic result wrapper for API responses
+ */
+export interface Result<T> {
+  value: T;
+  isSuccess: boolean;
+  error?: {
+    message: string;
+    code?: string;
+    details?: Record<string, any>;
+  };
+}
+";
+        await File.WriteAllTextAsync(Path.Combine(typesDir, "result.ts"), resultTypeContent, cancellationToken);
+
         foreach (var type in types)
         {
             var content = type.IsEnum
@@ -194,7 +214,8 @@ public sealed class GenerateCommand : Command
         logger.LogInformation("   ✓ Generated {Count} type files", types.Count);
 
         // Generate types index.ts (barrel export)
-        var typeExports = types.Select(t => ToCamelCase(t.Name)).ToList();
+        var typeExports = new List<string> { "result" }; // Always include Result<T>
+        typeExports.AddRange(types.Select(t => ToCamelCase(t.Name)));
         var typesIndexContent = await codeGenerator.GenerateBarrelExportAsync(typeExports, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(typesDir, "index.ts"), typesIndexContent, cancellationToken);
         logger.LogInformation("   ✓ Generated types/index.ts");
@@ -205,6 +226,11 @@ public sealed class GenerateCommand : Command
         var httpServiceCode = await codeGenerator.GenerateHttpServiceAsync(cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(libDir, "httpService.ts"), httpServiceCode, cancellationToken);
         logger.LogInformation("   ✓ Generated HTTP service");
+
+        // Generate lib/index.ts barrel export
+        var libIndexContent = await codeGenerator.GenerateBarrelExportAsync(new List<string> { "httpService" }, cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(libDir, "index.ts"), libIndexContent, cancellationToken);
+        logger.LogInformation("   ✓ Generated lib/index.ts");
 
         // Generate API client
         var apiDir = Path.Combine(outputPath, "api");
@@ -230,10 +256,13 @@ public sealed class GenerateCommand : Command
         logger.LogInformation("   ✓ Generated {Count} API client files + index.ts", groupedEndpoints.Count());
 
         // Generate validation schemas (if enabled)
+        var hasValidationIndex = false;
         if (config.Features.IncludeValidation && validationRules != null)
         {
             var validationDir = Path.Combine(outputPath, "validation");
             Directory.CreateDirectory(validationDir);
+
+            var generatedSchemas = new List<string>(); // Track which schemas were actually generated
 
             foreach (var type in types.Where(t => !t.IsEnum))
             {
@@ -246,16 +275,20 @@ public sealed class GenerateCommand : Command
                 {
                     var fileName = $"{ToCamelCase(type.Name)}.schema.ts";
                     await File.WriteAllTextAsync(Path.Combine(validationDir, fileName), schema, cancellationToken);
+                    generatedSchemas.Add($"{ToCamelCase(type.Name)}.schema");
                 }
             }
 
             logger.LogInformation("   ✓ Generated validation schemas");
 
-            // Generate validation/index.ts barrel export
-            var validationExports = types.Where(t => !t.IsEnum).Select(t => $"{ToCamelCase(t.Name)}.schema").ToList();
-            var validationIndexContent = await codeGenerator.GenerateBarrelExportAsync(validationExports, cancellationToken);
-            await File.WriteAllTextAsync(Path.Combine(validationDir, "index.ts"), validationIndexContent, cancellationToken);
-            logger.LogInformation("   ✓ Generated validation/index.ts");
+            // Generate validation/index.ts barrel export - only for types with actual schemas
+            if (generatedSchemas.Count > 0)
+            {
+                var validationIndexContent = await codeGenerator.GenerateBarrelExportAsync(generatedSchemas, cancellationToken);
+                await File.WriteAllTextAsync(Path.Combine(validationDir, "index.ts"), validationIndexContent, cancellationToken);
+                logger.LogInformation("   ✓ Generated validation/index.ts");
+                hasValidationIndex = true;
+            }
         }
 
         // Generate React hooks (if enabled)
@@ -290,9 +323,13 @@ public sealed class GenerateCommand : Command
                 if (endpoint.RequestType != null || endpoint.ResponseType != null)
                 {
                     var typeNames = new List<string>();
-                    if (endpoint.RequestType != null) typeNames.Add(endpoint.RequestType.Name);
-                    if (endpoint.ResponseType != null) typeNames.Add(endpoint.ResponseType.Name);
-                    sb.AppendLine($"import type {{ {string.Join(", ", typeNames)} }} from '../types';");
+                    if (endpoint.RequestType != null)
+                        typeNames.Add(CleanTypeNameForImport(endpoint.RequestType.Name));
+                    if (endpoint.ResponseType != null && endpoint.ResponseType.Name != "IResult")
+                        typeNames.Add(CleanTypeNameForImport(endpoint.ResponseType.Name));
+
+                    if (typeNames.Count > 0)
+                        sb.AppendLine($"import type {{ {string.Join(", ", typeNames)} }} from '../types';");
                 }
 
                 sb.AppendLine();
@@ -332,7 +369,7 @@ public sealed class GenerateCommand : Command
         logger.LogInformation("   📋 Generating root index.ts...");
         var rootExports = new List<string> { "types", "api", "lib" };
         if (config.Features.GenerateReactHooks) rootExports.Add("hooks");
-        if (config.Features.IncludeValidation) rootExports.Add("validation");
+        if (hasValidationIndex) rootExports.Add("validation");
 
         var rootIndexContent = await codeGenerator.GenerateBarrelExportAsync(rootExports, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(outputPath, "index.ts"), rootIndexContent, cancellationToken);
@@ -509,7 +546,14 @@ This SDK was automatically generated using [CodeBridge](https://github.com/sodiq
         if (actionName.EndsWith("Async"))
             actionName = actionName[..^5];
 
-        return $"{httpMethod}{ToPascalCase(actionName)}Async";
+        // If action already contains the HTTP method, just use it
+        if (actionName.ToLowerInvariant().StartsWith(httpMethod))
+        {
+            return ToCamelCase(actionName);
+        }
+
+        // Otherwise, combine method with action
+        return ToCamelCase($"{httpMethod}{actionName}");
     }
 
     private static string ToCamelCase(string value)
@@ -524,6 +568,207 @@ This SDK was automatically generated using [CodeBridge](https://github.com/sodiq
         if (string.IsNullOrEmpty(value) || char.IsUpper(value[0]))
             return value;
         return char.ToUpperInvariant(value[0]) + value[1..];
+    }
+
+    private static string CleanTypeNameForImport(string typeName)
+    {
+        if (string.IsNullOrEmpty(typeName))
+            return typeName;
+
+        // Remove array suffix (User[] -> User, WeatherForecast[] -> WeatherForecast)
+        typeName = typeName.TrimEnd('[', ']');
+
+        // Extract base type from generics (Result<User> -> Result, User)
+        // For now, just return the cleaned name - generic extraction happens in CodeGenerator
+        return typeName;
+    }
+
+    private static async Task<List<TypeInfo>> ExtractReferencedTypesFromEndpointsAsync(
+        List<EndpointInfo> endpoints,
+        List<TypeInfo> existingTypes,
+        SourceAnalyzer sourceAnalyzer,
+        List<Core.Models.ProjectInfo> projects,
+        CancellationToken cancellationToken)
+    {
+        var referencedTypes = new List<TypeInfo>();
+        var existingTypeNames = new HashSet<string>(existingTypes.Select(t => t.Name));
+        var missingTypeNames = new HashSet<string>();
+
+        // First pass: identify missing type names from both request AND response types
+        foreach (var endpoint in endpoints)
+        {
+            // Extract from response type
+            if (endpoint.ResponseType != null)
+            {
+                var responseTypeName = endpoint.ResponseType.Name;
+                var responseBaseTypes = ExtractBaseTypeNames(responseTypeName);
+
+                foreach (var baseType in responseBaseTypes)
+                {
+                    if (!existingTypeNames.Contains(baseType) &&
+                        !IsPrimitiveOrFrameworkType(baseType))
+                    {
+                        missingTypeNames.Add(baseType);
+                    }
+                }
+            }
+
+            // Extract from request type
+            if (endpoint.RequestType != null)
+            {
+                var requestTypeName = endpoint.RequestType.Name;
+                var requestBaseTypes = ExtractBaseTypeNames(requestTypeName);
+
+                foreach (var baseType in requestBaseTypes)
+                {
+                    if (!existingTypeNames.Contains(baseType) &&
+                        !IsPrimitiveOrFrameworkType(baseType))
+                    {
+                        missingTypeNames.Add(baseType);
+                    }
+                }
+            }
+
+            // Extract from parameters
+            if (endpoint.Parameters != null)
+            {
+                foreach (var param in endpoint.Parameters)
+                {
+                    if (param.Type != null)
+                    {
+                        var paramTypeName = param.Type.Name;
+                        var paramBaseTypes = ExtractBaseTypeNames(paramTypeName);
+
+                        foreach (var baseType in paramBaseTypes)
+                        {
+                            if (!existingTypeNames.Contains(baseType) &&
+                                !IsPrimitiveOrFrameworkType(baseType))
+                            {
+                                missingTypeNames.Add(baseType);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Second pass: re-discover all types and extract the missing ones
+        // This ensures we get full property information
+        if (missingTypeNames.Count > 0)
+        {
+            var allTypes = await sourceAnalyzer.DiscoverTypesAsync(projects, cancellationToken);
+
+            foreach (var type in allTypes)
+            {
+                if (missingTypeNames.Contains(type.Name))
+                {
+                    referencedTypes.Add(type);
+                    existingTypeNames.Add(type.Name); // Mark as found
+
+                    // Recursively add property type dependencies
+                    AddPropertyTypeDependencies(type, allTypes, referencedTypes, existingTypeNames, missingTypeNames);
+                }
+            }
+
+            // Add placeholder for any types still not found
+            foreach (var missingName in missingTypeNames)
+            {
+                if (!referencedTypes.Any(t => t.Name == missingName))
+                {
+                    referencedTypes.Add(new TypeInfo
+                    {
+                        Name = missingName,
+                        FullName = missingName,
+                        Namespace = null,
+                        IsEnum = false,
+                        Properties = new List<PropertyInfo>(),
+                        IsGeneric = false,
+                        GenericArguments = new List<TypeInfo>()
+                    });
+                }
+            }
+        }
+
+        return referencedTypes;
+    }
+
+    private static void AddPropertyTypeDependencies(
+        TypeInfo type,
+        List<TypeInfo> allDiscoveredTypes,
+        List<TypeInfo> referencedTypes,
+        HashSet<string> existingTypeNames,
+        HashSet<string> missingTypeNames)
+    {
+        // Examine all properties of this type
+        foreach (var property in type.Properties)
+        {
+            var propertyTypeName = property.Type.Name;
+            var baseTypes = ExtractBaseTypeNames(propertyTypeName);
+
+            foreach (var baseType in baseTypes)
+            {
+                // Skip if already included or is a primitive
+                if (existingTypeNames.Contains(baseType) || IsPrimitiveOrFrameworkType(baseType))
+                    continue;
+
+                // Find this type in the discovered types
+                var dependencyType = allDiscoveredTypes.FirstOrDefault(t => t.Name == baseType);
+                if (dependencyType != null)
+                {
+                    referencedTypes.Add(dependencyType);
+                    existingTypeNames.Add(baseType);
+
+                    // Recursively add its dependencies
+                    AddPropertyTypeDependencies(dependencyType, allDiscoveredTypes, referencedTypes, existingTypeNames, missingTypeNames);
+                }
+                else
+                {
+                    // Track as missing for placeholder generation
+                    missingTypeNames.Add(baseType);
+                }
+            }
+        }
+    }
+
+    private static List<string> ExtractBaseTypeNames(string typeName)
+    {
+        var types = new List<string>();
+
+        // Remove array suffix
+        typeName = typeName.TrimEnd('[', ']');
+
+        // Extract from generics: Result<User> -> [Result, User]
+        if (typeName.Contains('<') && typeName.Contains('>'))
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(typeName, @"^([^<]+)<(.+)>$");
+            if (match.Success)
+            {
+                types.Add(match.Groups[1].Value.Trim()); // Generic type (Result)
+
+                // Recursively extract inner types
+                var innerTypes = ExtractBaseTypeNames(match.Groups[2].Value.Trim());
+                types.AddRange(innerTypes);
+            }
+        }
+        else
+        {
+            types.Add(typeName);
+        }
+
+        return types;
+    }
+
+    private static bool IsPrimitiveOrFrameworkType(string typeName)
+    {
+        var primitiveTypes = new HashSet<string>
+        {
+            "string", "int", "long", "decimal", "double", "float", "bool", "DateTime", "DateTimeOffset",
+            "Guid", "byte", "short", "uint", "ulong", "ushort", "sbyte", "char", "object",
+            "void", "any", "unknown", "never", "null", "undefined",
+            "IResult", "Result", "ApiResponse", "IActionResult", "ActionResult"
+        };
+
+        return primitiveTypes.Contains(typeName);
     }
 
     private static string GetCodeBridgeVersion()

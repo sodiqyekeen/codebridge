@@ -6,6 +6,7 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>codebridge</ToolCommandName>
     <Description>CodeBridge CLI tool - Generate TypeScript SDKs from .NET APIs</Description>
+    <Version>1.0.0-preview.8</Version>
   </PropertyGroup>
 
   <ItemGroup>

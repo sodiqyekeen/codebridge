@@ -20,23 +20,17 @@
             .NET APIs</Description>
 
         <!-- Version -->
-        <Version>1.0.0-preview.7</Version>
+        <Version>1.0.0-preview.8</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
         <PackageReleaseNotes>
-            v1.0.0-preview.7: Fixed import generation and service parameter detection
-            - Fixed: Import statements now properly extract individual type names from generic types
-            (Result, InitiateLoginResponse, etc.)
-            - Fixed: Service interfaces (ICurrentUserService, etc.) no longer treated as request
-            parameters
-            - Fixed: Generated functions now have correct request and response types
-            - Improved: Type extraction from nested generics (ApiResponse&lt;Result&lt;T&gt;&gt;)
-            - All 42 tests passing
-            - Fixed: Validation calls only generated for types with validation schemas
-            - Fixed: Added validation imports to generated API files
-            - Fixed: Service interfaces no longer have validation calls
-            - Improved: Conditional validation based on actual schema existence
-
+            v1.0.0-preview.8: Fixed TypeScript compilation errors in generated SDK
+            - Fixed: React hook imports now use correct function names without "Async" suffix
+            - Fixed: API files now import Result type when used in return types
+            - Fixed: Added lib/index.ts barrel export for httpService
+            - Fixed: Validation schemas only generated for types with validators
+            - All 38 TypeScript compilation errors resolved
+            - Generated SDKs now fully type-safe and compilation-ready
         </PackageReleaseNotes>
     </PropertyGroup>
 
