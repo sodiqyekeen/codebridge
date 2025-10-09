@@ -580,7 +580,7 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
 
     private TypeInfo? ExtractProducesType(InvocationExpressionSyntax invocation)
     {
-        // Extract type from generic method: .Produces<ApiResponse<LoginResponse>>()
+        // Extract type from generic method: .Produces<ApiResponse<Result<LoginResponse>>>()
         if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
             memberAccess.Name is GenericNameSyntax genericName)
         {
@@ -589,17 +589,20 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             {
                 var typeName = typeArg.ToString();
 
-                // Strip outer wrapper like ApiResponse<T> to get T
-                var innerType = ExtractTypeFromGeneric(typeName, "ApiResponse", "Result");
+                // Strip ApiResponse wrapper: ApiResponse<Result<T>> -> Result<T>
+                var innerType = ExtractTypeFromGeneric(typeName, "ApiResponse");
+
+                // Keep Result<T> as-is (it's the actual type name we want)
+                var finalType = innerType ?? typeName;
 
                 return new TypeInfo
                 {
-                    Name = innerType ?? typeName,
-                    FullName = innerType ?? typeName,
+                    Name = finalType,
+                    FullName = finalType,
                     Namespace = null,
                     IsEnum = false,
                     Properties = new List<PropertyInfo>(),
-                    IsGeneric = false,
+                    IsGeneric = finalType.Contains("<"),
                     GenericArguments = new List<TypeInfo>()
                 };
             }
@@ -752,17 +755,45 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         TypeInfo? requestType = null;
         TypeInfo? responseType = null;
 
-        // Extract response type from return type
-        var returnType = method.ReturnType?.ToString();
-        if (!string.IsNullOrEmpty(returnType))
+        // Extract request type from first non-framework parameter
+        var parameters = method.ParameterList.Parameters;
+        foreach (var param in parameters)
         {
-            var extractedType = ExtractTypeFromGeneric(returnType, "Task", "ActionResult", "IActionResult", "Result");
-            if (!string.IsNullOrEmpty(extractedType))
+            var paramType = param.Type?.ToString();
+            if (string.IsNullOrEmpty(paramType))
+                continue;
+            if (IsBuiltInType(paramType) || IsFrameworkType(paramType) || paramType.Contains("Dispatcher") || paramType.Contains("CancellationToken"))
+                continue;
+            requestType = new TypeInfo
             {
+                Name = paramType,
+                FullName = paramType,
+                Namespace = null,
+                IsEnum = false,
+                Properties = [],
+                IsGeneric = false,
+                GenericArguments = []
+            };
+            break;
+        }
+
+        // Prefer .Produces<ApiResponse<T>>() metadata if available
+        var producesType = method.AttributeLists
+            .SelectMany(al => al.Attributes)
+            .Where(a => a.Name.ToString().Contains("Produces"))
+            .Select(a => a.ArgumentList?.Arguments.FirstOrDefault()?.ToString())
+            .FirstOrDefault();
+        if (!string.IsNullOrEmpty(producesType))
+        {
+            // Example: typeof(ApiResponse<LoginResponse>)
+            var match = Regex.Match(producesType, @"ApiResponse<([\w\.]+)>");
+            if (match.Success)
+            {
+                var typeName = match.Groups[1].Value.Trim();
                 responseType = new TypeInfo
                 {
-                    Name = extractedType,
-                    FullName = extractedType,
+                    Name = typeName,
+                    FullName = typeName,
                     Namespace = null,
                     IsEnum = false,
                     Properties = [],
@@ -772,36 +803,52 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             }
         }
 
-        // Extract request type from parameters
-        var parameters = method.ParameterList.Parameters;
-        foreach (var param in parameters)
+        // If not found, try dispatcher.SendAsync<Result<T>> pattern
+        if (responseType == null)
         {
-            var paramType = param.Type?.ToString();
-            if (string.IsNullOrEmpty(paramType))
-                continue;
-
-            // Skip built-in types and framework types
-            if (IsBuiltInType(paramType) || IsFrameworkType(paramType))
-                continue;
-
-            // Check for [FromBody] attribute
-            var hasFromBody = param.AttributeLists
-                .SelectMany(al => al.Attributes)
-                .Any(attr => attr.Name.ToString().Contains("FromBody"));
-
-            if (hasFromBody || parameters.Count == 1)
+            var body = method.Body?.ToString();
+            if (!string.IsNullOrEmpty(body))
             {
-                requestType = new TypeInfo
+                var sendAsyncPattern = @"SendAsync<([^>]+(?:<[^>]+>)?)>";
+                var match = Regex.Match(body, sendAsyncPattern);
+                if (match.Success)
                 {
-                    Name = paramType,
-                    FullName = paramType,
-                    Namespace = null,
-                    IsEnum = false,
-                    Properties = [],
-                    IsGeneric = false,
-                    GenericArguments = []
-                };
-                break;
+                    var dispatcherType = match.Groups[1].Value.Trim();
+                    var innerType = ExtractTypeFromGeneric(dispatcherType, "Result");
+                    responseType = new TypeInfo
+                    {
+                        Name = innerType ?? dispatcherType,
+                        FullName = innerType ?? dispatcherType,
+                        Namespace = null,
+                        IsEnum = false,
+                        Properties = [],
+                        IsGeneric = false,
+                        GenericArguments = []
+                    };
+                }
+            }
+        }
+
+        // If still not found, fall back to handler return type (unwrapping Task, ActionResult, etc.)
+        if (responseType == null)
+        {
+            var returnType = method.ReturnType?.ToString();
+            if (!string.IsNullOrEmpty(returnType))
+            {
+                var extractedType = ExtractTypeFromGeneric(returnType, "Task", "ActionResult", "IActionResult", "Result");
+                if (!string.IsNullOrEmpty(extractedType) && !IsFrameworkType(extractedType) && !IsBuiltInType(extractedType))
+                {
+                    responseType = new TypeInfo
+                    {
+                        Name = extractedType,
+                        FullName = extractedType,
+                        Namespace = null,
+                        IsEnum = false,
+                        Properties = [],
+                        IsGeneric = false,
+                        GenericArguments = []
+                    };
+                }
             }
         }
 
@@ -812,16 +859,16 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
     {
         foreach (var wrapper in wrappers)
         {
-            var pattern = $@"{wrapper}<(.+?)>";
+            // Use a more robust pattern that handles nested generics correctly
+            var pattern = $@"^{Regex.Escape(wrapper)}<(.+)>$";
             var match = Regex.Match(typeString, pattern);
             if (match.Success)
             {
                 typeString = match.Groups[1].Value.Trim();
+                // Only strip one level at a time
+                break;
             }
         }
-
-        // Remove any remaining generic wrappers
-        typeString = Regex.Replace(typeString, @"^[^<]+<(.+)>$", "$1").Trim();
 
         return string.IsNullOrEmpty(typeString) || typeString == "void" ? null : typeString;
     }

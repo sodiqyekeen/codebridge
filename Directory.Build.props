@@ -20,16 +20,17 @@
             .NET APIs</Description>
 
         <!-- Version -->
-        <Version>1.0.0-preview.5</Version>
+        <Version>1.0.0-preview.6</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
         <PackageReleaseNotes>
-            v1.0.0-preview.5: Barrel exports for clean imports
-            - Automatic index.ts generation in all directories (types/, api/, hooks/, validation/)
-            - Root index.ts for convenient top-level imports
-            - Clean import syntax: import { LoginRequest } from '../types' instead of
-            '../types/loginRequest'
-            - Maintains full backward compatibility with previous versions
+            v1.0.0-preview.6: Fixed type extraction for nested generics
+            - Fixed: Correctly extracts response types from ApiResponse&lt;Result&lt;T&gt;&gt;
+            - Fixed: Type imports now use actual type name (Result) instead of interface name
+            (IResult)
+            - Fixed: Void types replaced with actual response types (InitiatePasswordResetResponse,
+            etc.)
+            - Improved regex pattern to handle nested generic types correctly
             - All 42 tests passing
         </PackageReleaseNotes>
     </PropertyGroup>
