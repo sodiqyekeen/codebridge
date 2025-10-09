@@ -104,8 +104,9 @@ public sealed class GenerateCommand : Command
     {
         var logger = loggerFactory.CreateLogger<GenerateCommand>();
         var stopwatch = Stopwatch.StartNew();
+        var codeBridgeVersion = GetCodeBridgeVersion();
 
-        logger.LogInformation("\n🚀 Starting SDK generation...\n");
+        logger.LogInformation("\n🚀 Starting SDK generation (CodeBridge v{Version})...\n", codeBridgeVersion);
 
         // Phase 1: Source Analysis
         logger.LogInformation("📊 Phase 1/4: Analyzing source code...");
@@ -192,6 +193,12 @@ public sealed class GenerateCommand : Command
 
         logger.LogInformation("   ✓ Generated {Count} type files", types.Count);
 
+        // Generate types index.ts (barrel export)
+        var typeExports = types.Select(t => ToCamelCase(t.Name)).ToList();
+        var typesIndexContent = await codeGenerator.GenerateBarrelExportAsync(typeExports, cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(typesDir, "index.ts"), typesIndexContent, cancellationToken);
+        logger.LogInformation("   ✓ Generated types/index.ts");
+
         // Generate HTTP service
         var libDir = Path.Combine(outputPath, "lib");
         Directory.CreateDirectory(libDir);
@@ -215,7 +222,11 @@ public sealed class GenerateCommand : Command
             await File.WriteAllTextAsync(Path.Combine(apiDir, groupFileName), groupContent, cancellationToken);
         }
 
-        logger.LogInformation("   ✓ Generated {Count} API client files", groupedEndpoints.Count());
+        // Generate API index.ts (barrel export)
+        var apiExports = groupedEndpoints.Select(g => ToCamelCase(g.Key)).ToList();
+        var apiIndexContent = await codeGenerator.GenerateBarrelExportAsync(apiExports, cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(apiDir, "index.ts"), apiIndexContent, cancellationToken);
+        logger.LogInformation("   ✓ Generated {Count} API client files + index.ts", groupedEndpoints.Count());
 
         // Generate validation schemas (if enabled)
         if (config.Features.IncludeValidation && validationRules != null)
@@ -238,6 +249,12 @@ public sealed class GenerateCommand : Command
             }
 
             logger.LogInformation("   ✓ Generated validation schemas");
+
+            // Generate validation/index.ts barrel export
+            var validationExports = types.Where(t => !t.IsEnum).Select(t => $"{ToCamelCase(t.Name)}.schema").ToList();
+            var validationIndexContent = await codeGenerator.GenerateBarrelExportAsync(validationExports, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(validationDir, "index.ts"), validationIndexContent, cancellationToken);
+            logger.LogInformation("   ✓ Generated validation/index.ts");
         }
 
         // Generate React hooks (if enabled)
@@ -285,6 +302,12 @@ public sealed class GenerateCommand : Command
             }
 
             logger.LogInformation("   ✓ Generated {Count} React hooks", endpoints.Count);
+
+            // Generate hooks/index.ts barrel export
+            var hookExports = endpoints.Select(e => $"use{ToPascalCase(e.ActionName)}").ToList();
+            var hooksIndexContent = await codeGenerator.GenerateBarrelExportAsync(hookExports, cancellationToken);
+            await File.WriteAllTextAsync(Path.Combine(hooksDir, "index.ts"), hooksIndexContent, cancellationToken);
+            logger.LogInformation("   ✓ Generated hooks/index.ts");
         }
 
         // Generate Next.js helpers (if enabled)
@@ -303,6 +326,16 @@ public sealed class GenerateCommand : Command
 
             logger.LogInformation("   ✓ Generated {Count} server functions", endpoints.Count);
         }
+
+        // Generate root index.ts to re-export from all subdirectories
+        logger.LogInformation("   📋 Generating root index.ts...");
+        var rootExports = new List<string> { "types", "api", "lib" };
+        if (config.Features.GenerateReactHooks) rootExports.Add("hooks");
+        if (config.Features.IncludeValidation) rootExports.Add("validation");
+
+        var rootIndexContent = await codeGenerator.GenerateBarrelExportAsync(rootExports, cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(outputPath, "index.ts"), rootIndexContent, cancellationToken);
+        logger.LogInformation("   ✓ Generated root index.ts");
 
         // Phase 4: Package Generation
         logger.LogInformation("\n📦 Phase 4/4: Generating package files...");
@@ -411,6 +444,7 @@ public sealed class GenerateCommand : Command
         Core.Models.Configuration.CodeBridgeConfig config,
         CancellationToken cancellationToken)
     {
+        var codeBridgeVersion = GetCodeBridgeVersion();
         var features = new List<string>
         {
             "- ✅ Full TypeScript support",
@@ -452,7 +486,11 @@ const result = await apiClient.users.getAll();
 
 ## Generated with CodeBridge
 
-This SDK was automatically generated using [CodeBridge](https://github.com/clywell/codebridge).
+This SDK was automatically generated using [CodeBridge](https://github.com/sodiqyekeen/CodeBridge) v{codeBridgeVersion}.
+
+## License
+
+{config.Output.License}
 ";
 
         await File.WriteAllTextAsync(
@@ -485,5 +523,12 @@ This SDK was automatically generated using [CodeBridge](https://github.com/clywe
         if (string.IsNullOrEmpty(value) || char.IsUpper(value[0]))
             return value;
         return char.ToUpperInvariant(value[0]) + value[1..];
+    }
+
+    private static string GetCodeBridgeVersion()
+    {
+        var assembly = typeof(GenerateCommand).Assembly;
+        var version = assembly.GetName().Version;
+        return version != null ? $"{version.Major}.{version.Minor}.{version.Build}" : "1.0.0";
     }
 }

@@ -20,21 +20,23 @@
             .NET APIs</Description>
 
         <!-- Version -->
-        <Version>1.0.0-preview.4</Version>
+        <Version>1.0.0-preview.5</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
         <PackageReleaseNotes>
-            v1.0.0-preview.4: Enhanced HTTP service with enterprise features
-            - Storage interface: LocalStorage, SessionStorage, MemoryStorage, or custom
-            implementations
-            - Automatic token refresh: Intelligent request queuing prevents race conditions
-            - Token management: setTokens(), getToken(), clearTokens(), isAuthenticated()
-            - Fixed imports: All API client files and React hooks include proper imports
-            - Type safety: Full TypeScript support with generics throughout
-            - Production-ready: Configurable callbacks for auth errors and token refresh
-            - SSR compatible: Works with Next.js server-side rendering
+            v1.0.0-preview.5: Barrel exports for clean imports
+            - Automatic index.ts generation in all directories (types/, api/, hooks/, validation/)
+            - Root index.ts for convenient top-level imports
+            - Clean import syntax: import { LoginRequest } from '../types' instead of
+            '../types/loginRequest'
+            - Maintains full backward compatibility with previous versions
+            - All 42 tests passing
         </PackageReleaseNotes>
     </PropertyGroup>
+
+    <ItemGroup>
+        <AssemblyMetadata Include="PackageReleaseNotes" Value="$(PackageReleaseNotes)" />
+    </ItemGroup>
 
     <PropertyGroup Condition="'$(Configuration)' == 'Release'">
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
