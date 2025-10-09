@@ -90,10 +90,20 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             // Analyze each method to extract endpoint information
             foreach (var method in methodsWithAttribute)
             {
-                var endpoint = ExtractEndpointFromMethod(method, syntaxTree, cancellationToken);
-                if (endpoint != null)
+                // Check if this is a Minimal API registration method
+                if (IsMinimalApiRegistrationMethod(method))
                 {
-                    endpoints.Add(endpoint);
+                    var minimalApiEndpoints = ExtractMinimalApiEndpoints(method, syntaxTree, cancellationToken);
+                    endpoints.AddRange(minimalApiEndpoints);
+                }
+                else
+                {
+                    // Traditional controller endpoint
+                    var endpoint = ExtractEndpointFromMethod(method, syntaxTree, cancellationToken);
+                    if (endpoint != null)
+                    {
+                        endpoints.Add(endpoint);
+                    }
                 }
             }
         }
@@ -260,6 +270,340 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         cleaned = Regex.Replace(cleaned, "([a-z])([A-Z])", "$1-$2").ToLowerInvariant();
 
         return $"/{cleaned}";
+    }
+
+    /// <summary>
+    /// Checks if a method is a Minimal API registration method (extension method on IEndpointRouteBuilder with Map{Verb} calls).
+    /// </summary>
+    private static bool IsMinimalApiRegistrationMethod(MethodDeclarationSyntax method)
+    {
+        // Check 1: Is this an extension method on IEndpointRouteBuilder?
+        var firstParam = method.ParameterList.Parameters.FirstOrDefault();
+        if (firstParam == null) return false;
+
+        var hasThis = firstParam.Modifiers.Any(m => m.IsKind(SyntaxKind.ThisKeyword));
+        var extendsEndpointBuilder = firstParam.Type?.ToString().Contains("IEndpointRouteBuilder") == true;
+
+        if (!hasThis || !extendsEndpointBuilder)
+            return false;
+
+        // Check 2: Does method body contain Map{Verb} calls?
+        var hasMapCalls = method.Body?.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .Any(IsMapMethodCall) == true;
+
+        return hasMapCalls;
+    }
+
+    private static bool IsMapMethodCall(InvocationExpressionSyntax invocation)
+    {
+        var methodName = invocation.Expression switch
+        {
+            MemberAccessExpressionSyntax ma => ma.Name.Identifier.ValueText,
+            IdentifierNameSyntax id => id.Identifier.ValueText,
+            _ => null
+        };
+
+        return methodName is "MapGet" or "MapPost" or "MapPut" or "MapDelete" or "MapPatch" or "MapMethods";
+    }
+
+    /// <summary>
+    /// Extracts multiple endpoints from a Minimal API registration method.
+    /// </summary>
+    private List<EndpointInfo> ExtractMinimalApiEndpoints(
+        MethodDeclarationSyntax registrationMethod,
+        SyntaxTree syntaxTree,
+        CancellationToken cancellationToken)
+    {
+        var endpoints = new List<EndpointInfo>();
+
+        try
+        {
+            var methodBody = registrationMethod.Body;
+            if (methodBody == null) return endpoints;
+
+            // Step 1: Find MapGroup() call to get base route
+            string? baseRoute = ExtractMapGroupRoute(methodBody);
+
+            // Step 2: Find all Map{Verb} calls
+            var mapInvocations = methodBody.DescendantNodes()
+                .OfType<InvocationExpressionSyntax>()
+                .Where(IsMapVerbCall)
+                .ToList();
+
+            // Step 3: Parse each Map{Verb} invocation
+            foreach (var invocation in mapInvocations)
+            {
+                var endpoint = ParseMapInvocation(invocation, baseRoute, registrationMethod);
+                if (endpoint != null)
+                {
+                    // Apply [GenerateSdk] metadata from the registration method
+                    endpoint = ExtractSdkAttributeMetadata(registrationMethod, endpoint);
+                    endpoints.Add(endpoint);
+                }
+            }
+
+            _logger.LogDebug("Extracted {Count} Minimal API endpoints from {Method}",
+                endpoints.Count, registrationMethod.Identifier.ValueText);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting Minimal API endpoints from {Method}",
+                registrationMethod.Identifier.ValueText);
+        }
+
+        return endpoints;
+    }
+
+    private static bool IsMapVerbCall(InvocationExpressionSyntax invocation)
+    {
+        var methodName = invocation.Expression switch
+        {
+            MemberAccessExpressionSyntax ma => ma.Name.Identifier.ValueText,
+            _ => null
+        };
+
+        return methodName is "MapGet" or "MapPost" or "MapPut" or "MapDelete" or "MapPatch";
+    }
+
+    private static string? ExtractMapGroupRoute(BlockSyntax methodBody)
+    {
+        var groupCall = methodBody.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .FirstOrDefault(inv =>
+            {
+                var methodName = inv.Expression switch
+                {
+                    MemberAccessExpressionSyntax ma => ma.Name.Identifier.ValueText,
+                    IdentifierNameSyntax id => id.Identifier.ValueText,
+                    _ => null
+                };
+                return methodName == "MapGroup";
+            });
+
+        if (groupCall == null) return null;
+
+        // Extract route string from first argument
+        var routeArg = groupCall.ArgumentList.Arguments.FirstOrDefault();
+        if (routeArg?.Expression is LiteralExpressionSyntax literal)
+        {
+            return literal.Token.ValueText;
+        }
+
+        return null;
+    }
+
+    private EndpointInfo? ParseMapInvocation(
+        InvocationExpressionSyntax mapInvocation,
+        string? baseRoute,
+        MethodDeclarationSyntax registrationMethod)
+    {
+        try
+        {
+            // Extract HTTP verb
+            var httpMethod = ExtractHttpMethod(mapInvocation);
+            if (httpMethod == null) return null;
+
+            // Extract route from first argument
+            var routeArg = mapInvocation.ArgumentList.Arguments.FirstOrDefault();
+            var route = routeArg?.Expression switch
+            {
+                LiteralExpressionSyntax literal => literal.Token.ValueText,
+                MemberAccessExpressionSyntax { Name.Identifier.ValueText: "Empty" } => string.Empty,
+                _ => "/"
+            };
+
+            // Combine with base route
+            var fullRoute = CombineRoutes(baseRoute, route);
+
+            // Extract handler method reference from second argument
+            var handlerArg = mapInvocation.ArgumentList.Arguments.ElementAtOrDefault(1);
+            var handlerName = handlerArg?.Expression switch
+            {
+                IdentifierNameSyntax id => id.Identifier.ValueText,
+                _ => null
+            };
+
+            // Extract metadata from chained method calls
+            var metadata = ExtractEndpointMetadata(mapInvocation);
+
+            // Find the handler method to extract types
+            MethodDeclarationSyntax? handlerMethod = null;
+            if (handlerName != null)
+            {
+                handlerMethod = registrationMethod.Parent?.DescendantNodes()
+                    .OfType<MethodDeclarationSyntax>()
+                    .FirstOrDefault(m => m.Identifier.ValueText == handlerName);
+            }
+
+            // Extract request/response types
+            var (requestType, responseType) = handlerMethod != null
+                ? ExtractTypesFromMethodSignature(handlerMethod)
+                : (null, metadata.ResponseType);
+
+            return new EndpointInfo
+            {
+                HttpMethod = httpMethod,
+                Route = fullRoute,
+                ControllerName = registrationMethod.Parent switch
+                {
+                    ClassDeclarationSyntax cls => cls.Identifier.ValueText.Replace("Endpoints", ""),
+                    _ => "Unknown"
+                },
+                ActionName = handlerName ?? $"{httpMethod}{route}",
+                RequestType = requestType,
+                ResponseType = responseType ?? metadata.ResponseType,
+                RequiresAuthentication = metadata.RequiresAuth,
+                Summary = metadata.Summary,
+                Tags = metadata.Tags
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error parsing Map invocation");
+            return null;
+        }
+    }
+
+    private static string? ExtractHttpMethod(InvocationExpressionSyntax invocation)
+    {
+        var methodName = invocation.Expression switch
+        {
+            MemberAccessExpressionSyntax ma => ma.Name.Identifier.ValueText,
+            _ => null
+        };
+
+        return methodName switch
+        {
+            "MapGet" => "GET",
+            "MapPost" => "POST",
+            "MapPut" => "PUT",
+            "MapDelete" => "DELETE",
+            "MapPatch" => "PATCH",
+            _ => null
+        };
+    }
+
+    private EndpointMetadata ExtractEndpointMetadata(InvocationExpressionSyntax mapInvocation)
+    {
+        var metadata = new EndpointMetadata
+        {
+            RequiresAuth = true, // Default
+            Tags = new List<string>()
+        };
+
+        // Find all chained method calls
+        var current = mapInvocation.Parent;
+        while (current != null)
+        {
+            if (current is MemberAccessExpressionSyntax memberAccess)
+            {
+                if (memberAccess.Parent is InvocationExpressionSyntax chainedInvocation)
+                {
+                    ProcessChainedMethod(chainedInvocation, metadata);
+                    current = chainedInvocation.Parent;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        return metadata;
+    }
+
+    private void ProcessChainedMethod(InvocationExpressionSyntax invocation, EndpointMetadata metadata)
+    {
+        var methodName = invocation.Expression switch
+        {
+            MemberAccessExpressionSyntax ma => ma.Name.Identifier.ValueText,
+            _ => null
+        };
+
+        switch (methodName)
+        {
+            case "WithName":
+                metadata.EndpointName = ExtractStringArgument(invocation);
+                break;
+
+            case "WithSummary":
+                metadata.Summary = ExtractStringArgument(invocation);
+                break;
+
+            case "WithTags":
+                metadata.Tags.AddRange(ExtractStringArrayArguments(invocation));
+                break;
+
+            case "AllowAnonymous":
+                metadata.RequiresAuth = false;
+                break;
+
+            case "RequireAuthorization":
+                metadata.RequiresAuth = true;
+                break;
+
+            case "Produces":
+                metadata.ResponseType = ExtractProducesType(invocation);
+                break;
+        }
+    }
+
+    private static string? ExtractStringArgument(InvocationExpressionSyntax invocation)
+    {
+        var arg = invocation.ArgumentList.Arguments.FirstOrDefault();
+        return arg?.Expression is LiteralExpressionSyntax literal
+            ? literal.Token.ValueText
+            : null;
+    }
+
+    private static List<string> ExtractStringArrayArguments(InvocationExpressionSyntax invocation)
+    {
+        var tags = new List<string>();
+
+        foreach (var arg in invocation.ArgumentList.Arguments)
+        {
+            if (arg.Expression is LiteralExpressionSyntax literal)
+            {
+                tags.Add(literal.Token.ValueText);
+            }
+        }
+
+        return tags;
+    }
+
+    private TypeInfo? ExtractProducesType(InvocationExpressionSyntax invocation)
+    {
+        // Extract type from generic method: .Produces<ApiResponse<LoginResponse>>()
+        if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+            memberAccess.Name is GenericNameSyntax genericName)
+        {
+            var typeArg = genericName.TypeArgumentList.Arguments.FirstOrDefault();
+            if (typeArg != null)
+            {
+                var typeName = typeArg.ToString();
+
+                // Strip outer wrapper like ApiResponse<T> to get T
+                var innerType = ExtractTypeFromGeneric(typeName, "ApiResponse", "Result");
+
+                return new TypeInfo
+                {
+                    Name = innerType ?? typeName,
+                    FullName = innerType ?? typeName,
+                    Namespace = null,
+                    IsEnum = false,
+                    Properties = new List<PropertyInfo>(),
+                    IsGeneric = false,
+                    GenericArguments = new List<TypeInfo>()
+                };
+            }
+        }
+
+        return null;
     }
 
     private static EndpointInfo ExtractSdkAttributeMetadata(MethodDeclarationSyntax method, EndpointInfo endpoint)
@@ -977,17 +1321,6 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         return null;
     }
 
-    private static string? ExtractStringArgument(InvocationExpressionSyntax invocation)
-    {
-        var argument = invocation.ArgumentList.Arguments.FirstOrDefault();
-        if (argument?.Expression is LiteralExpressionSyntax literal)
-        {
-            return literal.Token.ValueText;
-        }
-
-        return null;
-    }
-
     #endregion
 
     #region Parameter Extraction
@@ -1052,4 +1385,16 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
     }
 
     #endregion
+}
+
+/// <summary>
+/// Helper class to accumulate endpoint metadata during parsing.
+/// </summary>
+internal class EndpointMetadata
+{
+    public string? EndpointName { get; set; }
+    public string? Summary { get; set; }
+    public List<string> Tags { get; set; } = new();
+    public bool RequiresAuth { get; set; } = true;
+    public TypeInfo? ResponseType { get; set; }
 }
