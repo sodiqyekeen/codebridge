@@ -277,12 +277,14 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
     /// </summary>
     private static bool IsMinimalApiRegistrationMethod(MethodDeclarationSyntax method)
     {
-        // Check 1: Is this an extension method on IEndpointRouteBuilder?
+        // Check 1: Is this an extension method on IEndpointRouteBuilder or RouteGroupBuilder?
         var firstParam = method.ParameterList.Parameters.FirstOrDefault();
         if (firstParam == null) return false;
 
         var hasThis = firstParam.Modifiers.Any(m => m.IsKind(SyntaxKind.ThisKeyword));
-        var extendsEndpointBuilder = firstParam.Type?.ToString().Contains("IEndpointRouteBuilder") == true;
+        var paramType = firstParam.Type?.ToString() ?? "";
+        var extendsEndpointBuilder = paramType.Contains("IEndpointRouteBuilder") ||
+                                      paramType.Contains("RouteGroupBuilder");
 
         if (!hasThis || !extendsEndpointBuilder)
             return false;

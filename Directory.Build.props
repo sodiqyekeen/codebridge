@@ -20,11 +20,10 @@
             .NET APIs</Description>
 
         <!-- Version -->
-        <Version>1.0.0-preview.2</Version>
+        <Version>1.0.0-preview.3</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
-        <PackageReleaseNotes>Added Minimal API support - can now detect and generate SDKs for
-            ASP.NET Core Minimal APIs using MapGet/MapPost/MapPut/MapDelete patterns</PackageReleaseNotes>
+        <PackageReleaseNotes>Added RouteGroupBuilder support - can now detect endpoints on both IEndpointRouteBuilder and RouteGroupBuilder extension methods</PackageReleaseNotes>
     </PropertyGroup>
 
     <PropertyGroup Condition="'$(Configuration)' == 'Release'">
