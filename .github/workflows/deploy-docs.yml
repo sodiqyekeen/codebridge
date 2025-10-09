@@ -89,7 +89,7 @@ jobs:
           ls -la *.html 2>/dev/null || echo "No HTML files found"
       
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
           path: _site
       
