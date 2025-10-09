@@ -53,4 +53,18 @@ public interface ICodeGenerator
     Task<string> GenerateBarrelExportAsync(
         List<string> exports,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Generates HTTP service implementation.
+    /// </summary>
+    Task<string> GenerateHttpServiceAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Generates API client file with imports for a group of endpoints.
+    /// </summary>
+    Task<string> GenerateApiClientFileAsync(
+        string groupName,
+        List<EndpointInfo> endpoints,
+        bool includeValidation = true,
+        CancellationToken cancellationToken = default);
 }

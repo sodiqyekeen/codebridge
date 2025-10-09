@@ -1,5 +1,7 @@
 using System.CommandLine;
 using System.Diagnostics;
+using System.Text;
+using CodeBridge.Core.Models;
 using CodeBridge.Core.Services;
 using Microsoft.Extensions.Logging;
 
@@ -190,6 +192,13 @@ public sealed class GenerateCommand : Command
 
         logger.LogInformation("   ✓ Generated {Count} type files", types.Count);
 
+        // Generate HTTP service
+        var libDir = Path.Combine(outputPath, "lib");
+        Directory.CreateDirectory(libDir);
+        var httpServiceCode = await codeGenerator.GenerateHttpServiceAsync(cancellationToken);
+        await File.WriteAllTextAsync(Path.Combine(libDir, "httpService.ts"), httpServiceCode, cancellationToken);
+        logger.LogInformation("   ✓ Generated HTTP service");
+
         // Generate API client
         var apiDir = Path.Combine(outputPath, "api");
         Directory.CreateDirectory(apiDir);
@@ -197,18 +206,12 @@ public sealed class GenerateCommand : Command
         var groupedEndpoints = endpoints.GroupBy(e => e.Group ?? "general");
         foreach (var group in groupedEndpoints)
         {
-            var functions = new List<string>();
-            foreach (var endpoint in group)
-            {
-                var functionCode = await codeGenerator.GenerateApiClientFunctionAsync(
-                    endpoint,
-                    config.Features.IncludeValidation,
-                    cancellationToken);
-                functions.Add(functionCode);
-            }
-
             var groupFileName = $"{ToCamelCase(group.Key)}.ts";
-            var groupContent = string.Join("\n\n", functions);
+            var groupContent = await codeGenerator.GenerateApiClientFileAsync(
+                group.Key,
+                group.ToList(),
+                config.Features.IncludeValidation,
+                cancellationToken);
             await File.WriteAllTextAsync(Path.Combine(apiDir, groupFileName), groupContent, cancellationToken);
         }
 
@@ -247,8 +250,38 @@ public sealed class GenerateCommand : Command
             foreach (var endpoint in endpoints)
             {
                 var hookCode = await codeGenerator.GenerateReactHookAsync(endpoint, cancellationToken);
+                var functionName = GenerateFunctionName(endpoint);
+                var groupName = endpoint.Group ?? "general";
+
+                // Add imports
+                var sb = new StringBuilder();
+                var httpMethod = endpoint.HttpMethod.ToUpperInvariant();
+                var isQuery = httpMethod == "GET";
+
+                if (isQuery)
+                {
+                    sb.AppendLine("import { useQuery } from '@tanstack/react-query';");
+                }
+                else
+                {
+                    sb.AppendLine("import { useMutation } from '@tanstack/react-query';");
+                }
+                sb.AppendLine($"import {{ {functionName} }} from '../api/{ToCamelCase(groupName)}';");
+
+                // Add type imports if needed
+                if (endpoint.RequestType != null || endpoint.ResponseType != null)
+                {
+                    var typeNames = new List<string>();
+                    if (endpoint.RequestType != null) typeNames.Add(endpoint.RequestType.Name);
+                    if (endpoint.ResponseType != null) typeNames.Add(endpoint.ResponseType.Name);
+                    sb.AppendLine($"import type {{ {string.Join(", ", typeNames)} }} from '../types';");
+                }
+
+                sb.AppendLine();
+                sb.Append(hookCode);
+
                 var fileName = $"use{ToPascalCase(endpoint.ActionName)}.ts";
-                await File.WriteAllTextAsync(Path.Combine(hooksDir, fileName), hookCode, cancellationToken);
+                await File.WriteAllTextAsync(Path.Combine(hooksDir, fileName), sb.ToString(), cancellationToken);
             }
 
             logger.LogInformation("   ✓ Generated {Count} React hooks", endpoints.Count);
@@ -426,6 +459,18 @@ This SDK was automatically generated using [CodeBridge](https://github.com/clywe
             Path.Combine(outputPath, "README.md"),
             readme,
             cancellationToken);
+    }
+
+    private static string GenerateFunctionName(EndpointInfo endpoint)
+    {
+        var httpMethod = endpoint.HttpMethod.ToLowerInvariant();
+        var actionName = endpoint.ActionName;
+
+        // Remove "Async" suffix if present
+        if (actionName.EndsWith("Async"))
+            actionName = actionName[..^5];
+
+        return $"{httpMethod}{ToPascalCase(actionName)}Async";
     }
 
     private static string ToCamelCase(string value)

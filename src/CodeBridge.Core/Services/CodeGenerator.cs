@@ -622,4 +622,414 @@ public sealed class CodeGenerator : ICodeGenerator
     }
 
     #endregion
+
+    #region HTTP Service and API Client File Generation
+
+    /// <summary>
+    /// Generates the HTTP service implementation with axios, storage interface, and token refresh.
+    /// </summary>
+    public Task<string> GenerateHttpServiceAsync(CancellationToken cancellationToken = default)
+    {
+        var sb = new StringBuilder();
+
+        // Storage interface and implementations
+        sb.AppendLine("import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * Storage interface for token persistence");
+        sb.AppendLine(" * Allows choosing between localStorage, sessionStorage, or custom implementations");
+        sb.AppendLine(" */");
+        sb.AppendLine("export interface IStorage {");
+        sb.AppendLine("  getItem(key: string): string | null;");
+        sb.AppendLine("  setItem(key: string, value: string): void;");
+        sb.AppendLine("  removeItem(key: string): void;");
+        sb.AppendLine("  clear(): void;");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * LocalStorage implementation (persists across browser sessions)");
+        sb.AppendLine(" */");
+        sb.AppendLine("export class LocalStorageAdapter implements IStorage {");
+        sb.AppendLine("  getItem(key: string): string | null {");
+        sb.AppendLine("    if (typeof window === 'undefined') return null;");
+        sb.AppendLine("    return localStorage.getItem(key);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  setItem(key: string, value: string): void {");
+        sb.AppendLine("    if (typeof window === 'undefined') return;");
+        sb.AppendLine("    localStorage.setItem(key, value);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  removeItem(key: string): void {");
+        sb.AppendLine("    if (typeof window === 'undefined') return;");
+        sb.AppendLine("    localStorage.removeItem(key);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  clear(): void {");
+        sb.AppendLine("    if (typeof window === 'undefined') return;");
+        sb.AppendLine("    localStorage.clear();");
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * SessionStorage implementation (clears when browser tab closes)");
+        sb.AppendLine(" */");
+        sb.AppendLine("export class SessionStorageAdapter implements IStorage {");
+        sb.AppendLine("  getItem(key: string): string | null {");
+        sb.AppendLine("    if (typeof window === 'undefined') return null;");
+        sb.AppendLine("    return sessionStorage.getItem(key);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  setItem(key: string, value: string): void {");
+        sb.AppendLine("    if (typeof window === 'undefined') return;");
+        sb.AppendLine("    sessionStorage.setItem(key, value);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  removeItem(key: string): void {");
+        sb.AppendLine("    if (typeof window === 'undefined') return;");
+        sb.AppendLine("    sessionStorage.removeItem(key);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  clear(): void {");
+        sb.AppendLine("    if (typeof window === 'undefined') return;");
+        sb.AppendLine("    sessionStorage.clear();");
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * In-memory storage implementation (clears on page reload)");
+        sb.AppendLine(" * Useful for server-side rendering or testing");
+        sb.AppendLine(" */");
+        sb.AppendLine("export class MemoryStorageAdapter implements IStorage {");
+        sb.AppendLine("  private storage: Map<string, string> = new Map();");
+        sb.AppendLine();
+        sb.AppendLine("  getItem(key: string): string | null {");
+        sb.AppendLine("    return this.storage.get(key) ?? null;");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  setItem(key: string, value: string): void {");
+        sb.AppendLine("    this.storage.set(key, value);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  removeItem(key: string): void {");
+        sb.AppendLine("    this.storage.delete(key);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  clear(): void {");
+        sb.AppendLine("    this.storage.clear();");
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * HTTP service configuration options");
+        sb.AppendLine(" */");
+        sb.AppendLine("export interface HttpServiceConfig {");
+        sb.AppendLine("  /** Base URL for API requests */");
+        sb.AppendLine("  baseURL: string;");
+        sb.AppendLine("  /** Storage adapter for token persistence (default: LocalStorage) */");
+        sb.AppendLine("  storage?: IStorage;");
+        sb.AppendLine("  /** Token storage key (default: 'token') */");
+        sb.AppendLine("  tokenKey?: string;");
+        sb.AppendLine("  /** Refresh token storage key (default: 'refreshToken') */");
+        sb.AppendLine("  refreshTokenKey?: string;");
+        sb.AppendLine("  /** Endpoint for token refresh (default: '/auth/refresh') */");
+        sb.AppendLine("  refreshEndpoint?: string;");
+        sb.AppendLine("  /** Enable automatic token refresh (default: true) */");
+        sb.AppendLine("  enableTokenRefresh?: boolean;");
+        sb.AppendLine("  /** Callback on authentication failure */");
+        sb.AppendLine("  onAuthError?: () => void;");
+        sb.AppendLine("  /** Callback on token refresh */");
+        sb.AppendLine("  onTokenRefreshed?: (token: string) => void;");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * Token refresh response interface");
+        sb.AppendLine(" */");
+        sb.AppendLine("interface TokenRefreshResponse {");
+        sb.AppendLine("  token: string;");
+        sb.AppendLine("  refreshToken?: string;");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("/**");
+        sb.AppendLine(" * HTTP service wrapper for API calls with automatic token refresh");
+        sb.AppendLine(" */");
+        sb.AppendLine("class HttpService {");
+        sb.AppendLine("  private client: AxiosInstance;");
+        sb.AppendLine("  private storage: IStorage;");
+        sb.AppendLine("  private tokenKey: string;");
+        sb.AppendLine("  private refreshTokenKey: string;");
+        sb.AppendLine("  private refreshEndpoint: string;");
+        sb.AppendLine("  private enableTokenRefresh: boolean;");
+        sb.AppendLine("  private onAuthError?: () => void;");
+        sb.AppendLine("  private onTokenRefreshed?: (token: string) => void;");
+        sb.AppendLine("  private isRefreshing = false;");
+        sb.AppendLine("  private refreshSubscribers: ((token: string) => void)[] = [];");
+        sb.AppendLine();
+        sb.AppendLine("  constructor(config: HttpServiceConfig) {");
+        sb.AppendLine("    this.storage = config.storage ?? new LocalStorageAdapter();");
+        sb.AppendLine("    this.tokenKey = config.tokenKey ?? 'token';");
+        sb.AppendLine("    this.refreshTokenKey = config.refreshTokenKey ?? 'refreshToken';");
+        sb.AppendLine("    this.refreshEndpoint = config.refreshEndpoint ?? '/auth/refresh';");
+        sb.AppendLine("    this.enableTokenRefresh = config.enableTokenRefresh ?? true;");
+        sb.AppendLine("    this.onAuthError = config.onAuthError;");
+        sb.AppendLine("    this.onTokenRefreshed = config.onTokenRefreshed;");
+        sb.AppendLine();
+        sb.AppendLine("    this.client = axios.create({");
+        sb.AppendLine("      baseURL: config.baseURL,");
+        sb.AppendLine("      headers: {");
+        sb.AppendLine("        'Content-Type': 'application/json',");
+        sb.AppendLine("      },");
+        sb.AppendLine("    });");
+        sb.AppendLine();
+        sb.AppendLine("    this.setupInterceptors();");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Set up request and response interceptors");
+        sb.AppendLine("   */");
+        sb.AppendLine("  private setupInterceptors(): void {");
+        sb.AppendLine("    // Request interceptor: Add auth token to requests");
+        sb.AppendLine("    this.client.interceptors.request.use(");
+        sb.AppendLine("      (config) => {");
+        sb.AppendLine("        const token = this.storage.getItem(this.tokenKey);");
+        sb.AppendLine("        if (token) {");
+        sb.AppendLine("          config.headers.Authorization = `Bearer ${token}`;");
+        sb.AppendLine("        }");
+        sb.AppendLine("        return config;");
+        sb.AppendLine("      },");
+        sb.AppendLine("      (error) => Promise.reject(error)");
+        sb.AppendLine("    );");
+        sb.AppendLine();
+        sb.AppendLine("    // Response interceptor: Handle errors and token refresh");
+        sb.AppendLine("    this.client.interceptors.response.use(");
+        sb.AppendLine("      (response) => response,");
+        sb.AppendLine("      async (error: AxiosError) => {");
+        sb.AppendLine("        const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };");
+        sb.AppendLine();
+        sb.AppendLine("        // Handle 401 Unauthorized");
+        sb.AppendLine("        if (error.response?.status === 401 && !originalRequest._retry) {");
+        sb.AppendLine("          if (this.enableTokenRefresh) {");
+        sb.AppendLine("            originalRequest._retry = true;");
+        sb.AppendLine();
+        sb.AppendLine("            try {");
+        sb.AppendLine("              const token = await this.refreshToken();");
+        sb.AppendLine("              if (originalRequest.headers) {");
+        sb.AppendLine("                originalRequest.headers.Authorization = `Bearer ${token}`;");
+        sb.AppendLine("              }");
+        sb.AppendLine("              return this.client(originalRequest);");
+        sb.AppendLine("            } catch (refreshError) {");
+        sb.AppendLine("              this.handleAuthError();");
+        sb.AppendLine("              return Promise.reject(refreshError);");
+        sb.AppendLine("            }");
+        sb.AppendLine("          } else {");
+        sb.AppendLine("            this.handleAuthError();");
+        sb.AppendLine("          }");
+        sb.AppendLine("        }");
+        sb.AppendLine();
+        sb.AppendLine("        return Promise.reject(error);");
+        sb.AppendLine("      }");
+        sb.AppendLine("    );");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Refresh the access token using refresh token");
+        sb.AppendLine("   */");
+        sb.AppendLine("  private async refreshToken(): Promise<string> {");
+        sb.AppendLine("    if (this.isRefreshing) {");
+        sb.AppendLine("      // If already refreshing, wait for it to complete");
+        sb.AppendLine("      return new Promise((resolve) => {");
+        sb.AppendLine("        this.refreshSubscribers.push((token: string) => resolve(token));");
+        sb.AppendLine("      });");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+        sb.AppendLine("    this.isRefreshing = true;");
+        sb.AppendLine();
+        sb.AppendLine("    try {");
+        sb.AppendLine("      const refreshToken = this.storage.getItem(this.refreshTokenKey);");
+        sb.AppendLine("      if (!refreshToken) {");
+        sb.AppendLine("        throw new Error('No refresh token available');");
+        sb.AppendLine("      }");
+        sb.AppendLine();
+        sb.AppendLine("      const response = await axios.post<TokenRefreshResponse>(");
+        sb.AppendLine("        `${this.client.defaults.baseURL}${this.refreshEndpoint}`,");
+        sb.AppendLine("        { refreshToken }");
+        sb.AppendLine("      );");
+        sb.AppendLine();
+        sb.AppendLine("      const { token, refreshToken: newRefreshToken } = response.data;");
+        sb.AppendLine();
+        sb.AppendLine("      // Store new tokens");
+        sb.AppendLine("      this.storage.setItem(this.tokenKey, token);");
+        sb.AppendLine("      if (newRefreshToken) {");
+        sb.AppendLine("        this.storage.setItem(this.refreshTokenKey, newRefreshToken);");
+        sb.AppendLine("      }");
+        sb.AppendLine();
+        sb.AppendLine("      // Notify callback");
+        sb.AppendLine("      if (this.onTokenRefreshed) {");
+        sb.AppendLine("        this.onTokenRefreshed(token);");
+        sb.AppendLine("      }");
+        sb.AppendLine();
+        sb.AppendLine("      // Notify all waiting requests");
+        sb.AppendLine("      this.refreshSubscribers.forEach((callback) => callback(token));");
+        sb.AppendLine("      this.refreshSubscribers = [];");
+        sb.AppendLine();
+        sb.AppendLine("      return token;");
+        sb.AppendLine("    } catch (error) {");
+        sb.AppendLine("      this.refreshSubscribers = [];");
+        sb.AppendLine("      throw error;");
+        sb.AppendLine("    } finally {");
+        sb.AppendLine("      this.isRefreshing = false;");
+        sb.AppendLine("    }");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Handle authentication errors");
+        sb.AppendLine("   */");
+        sb.AppendLine("  private handleAuthError(): void {");
+        sb.AppendLine("    this.clearTokens();");
+        sb.AppendLine("    if (this.onAuthError) {");
+        sb.AppendLine("      this.onAuthError();");
+        sb.AppendLine("    } else if (typeof window !== 'undefined') {");
+        sb.AppendLine("      // Default behavior: redirect to login");
+        sb.AppendLine("      window.location.href = '/login';");
+        sb.AppendLine("    }");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Store authentication tokens");
+        sb.AppendLine("   */");
+        sb.AppendLine("  public setTokens(token: string, refreshToken?: string): void {");
+        sb.AppendLine("    this.storage.setItem(this.tokenKey, token);");
+        sb.AppendLine("    if (refreshToken) {");
+        sb.AppendLine("      this.storage.setItem(this.refreshTokenKey, refreshToken);");
+        sb.AppendLine("    }");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Get current access token");
+        sb.AppendLine("   */");
+        sb.AppendLine("  public getToken(): string | null {");
+        sb.AppendLine("    return this.storage.getItem(this.tokenKey);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Clear all authentication tokens");
+        sb.AppendLine("   */");
+        sb.AppendLine("  public clearTokens(): void {");
+        sb.AppendLine("    this.storage.removeItem(this.tokenKey);");
+        sb.AppendLine("    this.storage.removeItem(this.refreshTokenKey);");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  /**");
+        sb.AppendLine("   * Check if user is authenticated");
+        sb.AppendLine("   */");
+        sb.AppendLine("  public isAuthenticated(): boolean {");
+        sb.AppendLine("    return !!this.getToken();");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {");
+        sb.AppendLine("    const response: AxiosResponse<T> = await this.client.get(url, config);");
+        sb.AppendLine("    return response.data;");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async post<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {");
+        sb.AppendLine("    const response: AxiosResponse<T> = await this.client.post(url, data, config);");
+        sb.AppendLine("    return response.data;");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async put<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {");
+        sb.AppendLine("    const response: AxiosResponse<T> = await this.client.put(url, data, config);");
+        sb.AppendLine("    return response.data;");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async delete<T>(url: string, config?: AxiosRequestConfig): Promise<T> {");
+        sb.AppendLine("    const response: AxiosResponse<T> = await this.client.delete(url, config);");
+        sb.AppendLine("    return response.data;");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async patch<T>(url: string, data?: any, config?: AxiosRequestConfig): Promise<T> {");
+        sb.AppendLine("    const response: AxiosResponse<T> = await this.client.patch(url, data, config);");
+        sb.AppendLine("    return response.data;");
+        sb.AppendLine("  }");
+        sb.AppendLine();
+        sb.AppendLine("  async downloadFile(url: string, config?: AxiosRequestConfig): Promise<Blob> {");
+        sb.AppendLine("    const response: AxiosResponse<Blob> = await this.client.get(url, {");
+        sb.AppendLine("      ...config,");
+        sb.AppendLine("      responseType: 'blob',");
+        sb.AppendLine("    });");
+        sb.AppendLine("    return response.data;");
+        sb.AppendLine("  }");
+        sb.AppendLine("}");
+        sb.AppendLine();
+        sb.AppendLine("// Create and export singleton instance with configurable storage");
+        sb.AppendLine("// Default: LocalStorage (persists across sessions)");
+        sb.AppendLine("// To use SessionStorage: http.storage = new SessionStorageAdapter()");
+        sb.AppendLine("// To use MemoryStorage: http.storage = new MemoryStorageAdapter()");
+        sb.AppendLine("const http = new HttpService({");
+        sb.AppendLine("  baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000',");
+        sb.AppendLine("  storage: new LocalStorageAdapter(), // Change to SessionStorageAdapter() if needed");
+        sb.AppendLine("  enableTokenRefresh: true,");
+        sb.AppendLine("  refreshEndpoint: '/auth/refresh',");
+        sb.AppendLine("  onAuthError: () => {");
+        sb.AppendLine("    // Custom auth error handling");
+        sb.AppendLine("    console.error('Authentication failed. Redirecting to login...');");
+        sb.AppendLine("    if (typeof window !== 'undefined') {");
+        sb.AppendLine("      window.location.href = '/login';");
+        sb.AppendLine("    }");
+        sb.AppendLine("  },");
+        sb.AppendLine("  onTokenRefreshed: (token) => {");
+        sb.AppendLine("    console.log('Token refreshed successfully');");
+        sb.AppendLine("  },");
+        sb.AppendLine("});");
+        sb.AppendLine();
+        sb.AppendLine("export default http;");
+        sb.AppendLine("export { HttpService };");
+
+        return Task.FromResult(sb.ToString());
+    }
+
+    /// <summary>
+    /// Generates a complete API client file with imports for a group of endpoints.
+    /// </summary>
+    public async Task<string> GenerateApiClientFileAsync(
+        string groupName,
+        List<EndpointInfo> endpoints,
+        bool includeValidation = true,
+        CancellationToken cancellationToken = default)
+    {
+        var sb = new StringBuilder();
+
+        // Add imports
+        sb.AppendLine("import http from '../lib/httpService';");
+
+        // Collect all unique types used in this file
+        var usedTypes = new HashSet<string>();
+        foreach (var endpoint in endpoints)
+        {
+            if (endpoint.RequestType != null)
+                usedTypes.Add(endpoint.RequestType.Name);
+            if (endpoint.ResponseType != null)
+                usedTypes.Add(endpoint.ResponseType.Name);
+        }
+
+        // Add type imports
+        if (usedTypes.Count > 0)
+        {
+            var typeImports = string.Join(", ", usedTypes.Select(t => t));
+            sb.AppendLine($"import type {{ {typeImports} }} from '../types';");
+        }
+
+        sb.AppendLine();
+
+        // Generate functions
+        foreach (var endpoint in endpoints)
+        {
+            var functionCode = await GenerateApiClientFunctionAsync(endpoint, includeValidation, cancellationToken);
+            sb.AppendLine(functionCode);
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    #endregion
 }
