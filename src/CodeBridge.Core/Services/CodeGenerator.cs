@@ -189,6 +189,8 @@ public sealed class CodeGenerator : ICodeGenerator
         var parameters = GenerateFunctionParameters(endpoint);
         var returnType = GenerateReturnType(endpoint);
 
+        Console.WriteLine($"[CODEGEN] Endpoint: {endpoint.Route}, ReturnType: {returnType}");
+
         sb.AppendLine($"export async function {functionName}({parameters}): Promise<{returnType}> {{");
 
         // Generate function body - validate only if this endpoint has validation rules
@@ -301,12 +303,53 @@ public sealed class CodeGenerator : ICodeGenerator
         else
         {
             // Generate useMutation hook
-            var requestType = endpoint.RequestType != null ? _typeMapper.MapToTypeScript(endpoint.RequestType) : "void";
+            // Check if endpoint has any parameters (route params or request body)
+            var hasRouteParams = endpoint.Parameters.Any(p => p.Source == ParameterSource.Route);
+            var hasRequestBody = endpoint.RequestType != null;
 
-            sb.AppendLine($"export function {hookName}() {{");
-            sb.AppendLine($"  return useMutation({{");
-            sb.AppendLine($"    mutationFn: (data: {requestType}) => {functionName}(data)");
-            sb.AppendLine($"  }});");
+            if (hasRouteParams && !hasRequestBody)
+            {
+                // Only route parameters (e.g., DELETE /roles/{roleId})
+                var routeParam = endpoint.Parameters.First(p => p.Source == ParameterSource.Route);
+                var paramType = _typeMapper.MapToTypeScript(routeParam.Type);
+                var paramName = ToCamelCase(routeParam.Name);
+
+                sb.AppendLine($"export function {hookName}() {{");
+                sb.AppendLine($"  return useMutation({{");
+                sb.AppendLine($"    mutationFn: ({paramName}: {paramType}) => {functionName}({paramName})");
+                sb.AppendLine($"  }});");
+            }
+            else if (hasRequestBody && hasRouteParams)
+            {
+                // Both route parameters and request body (e.g., PUT /roles/{roleId} with body)
+                var routeParam = endpoint.Parameters.First(p => p.Source == ParameterSource.Route);
+                var routeParamType = _typeMapper.MapToTypeScript(routeParam.Type);
+                var routeParamName = ToCamelCase(routeParam.Name);
+                var requestType = _typeMapper.MapToTypeScript(endpoint.RequestType);
+
+                sb.AppendLine($"export function {hookName}() {{");
+                sb.AppendLine($"  return useMutation({{");
+                sb.AppendLine($"    mutationFn: ({{ {routeParamName}, data }}: {{ {routeParamName}: {routeParamType}; data: {requestType} }}) => {functionName}({routeParamName}, data)");
+                sb.AppendLine($"  }});");
+            }
+            else if (hasRequestBody)
+            {
+                // Only request body (e.g., POST /roles with body)
+                var requestType = _typeMapper.MapToTypeScript(endpoint.RequestType);
+
+                sb.AppendLine($"export function {hookName}() {{");
+                sb.AppendLine($"  return useMutation({{");
+                sb.AppendLine($"    mutationFn: (data: {requestType}) => {functionName}(data)");
+                sb.AppendLine($"  }});");
+            }
+            else
+            {
+                // No parameters at all (e.g., POST /2fa/setup)
+                sb.AppendLine($"export function {hookName}() {{");
+                sb.AppendLine($"  return useMutation({{");
+                sb.AppendLine($"    mutationFn: () => {functionName}()");
+                sb.AppendLine($"  }});");
+            }
         }
 
         sb.AppendLine("}");
@@ -465,7 +508,8 @@ public sealed class CodeGenerator : ICodeGenerator
 
         sb.AppendLine("});");
         sb.AppendLine();
-        sb.AppendLine($"export type {typeInfo.Name} = z.infer<typeof {ToCamelCase(typeInfo.Name)}Schema>;");
+        // Note: Type is exported from types/ module to avoid duplication
+        // export type {typeInfo.Name} = z.infer<typeof {ToCamelCase(typeInfo.Name)}Schema>;
 
         return Task.FromResult(sb.ToString());
     }
@@ -504,27 +548,44 @@ public sealed class CodeGenerator : ICodeGenerator
     private string GenerateFunctionName(EndpointInfo endpoint)
     {
         // Convert HTTP method and action to camelCase function name
-        // GET /products -> getProducts
-        // POST /products -> createProduct
-        // PUT /products/{id} -> updateProduct
-        // DELETE /products/{id} -> deleteProduct
+        // GET /products -> getProductsAsync
+        // POST /products -> createProductAsync
+        // PUT /products/{id} -> updateProductAsync
+        // DELETE /products/{id} -> deleteProductAsync
 
         var action = endpoint.ActionName;
         var method = endpoint.HttpMethod.ToLowerInvariant();
 
+        // Remove "Async" suffix if present in action name (will be re-added later)
+        if (action.EndsWith("Async", StringComparison.OrdinalIgnoreCase))
+            action = action[..^5];
+
         // If action already contains the HTTP method, just use it
+        string baseName;
         if (action.ToLowerInvariant().StartsWith(method))
         {
-            return ToCamelCase(action);
+            baseName = ToCamelCase(action);
+        }
+        else
+        {
+            // Otherwise, combine method with action
+            baseName = ToCamelCase($"{method}{action}");
         }
 
-        // Otherwise, combine method with action
-        return ToCamelCase($"{method}{action}");
+        // Always append "Async" suffix to function names
+        return $"{baseName}Async";
     }
 
     private string GenerateFunctionParameters(EndpointInfo endpoint, bool includeFile = true)
     {
         var parameters = new List<string>();
+
+        // Add route parameters first (convention: path params before body)
+        foreach (var param in endpoint.Parameters.Where(p => p.Source == ParameterSource.Route))
+        {
+            var paramType = _typeMapper.MapToTypeScript(param.Type);
+            parameters.Add($"{ToCamelCase(param.Name)}: {paramType}");
+        }
 
         // Add request body parameter
         if (endpoint.RequestType != null)
@@ -539,13 +600,6 @@ public sealed class CodeGenerator : ICodeGenerator
             parameters.Add("file: File");
         }
 
-        // Add route parameters
-        foreach (var param in endpoint.Parameters.Where(p => p.Source == ParameterSource.Route))
-        {
-            var paramType = _typeMapper.MapToTypeScript(param.Type);
-            parameters.Add($"{ToCamelCase(param.Name)}: {paramType}");
-        }
-
         return string.Join(", ", parameters);
     }
 
@@ -558,7 +612,10 @@ public sealed class CodeGenerator : ICodeGenerator
 
         if (endpoint.ResponseType != null)
         {
-            return _typeMapper.MapToTypeScript(endpoint.ResponseType);
+            Console.WriteLine($"[GENRETURN] ResponseType.Name: '{endpoint.ResponseType.Name}'");
+            var mapped = _typeMapper.MapToTypeScript(endpoint.ResponseType);
+            Console.WriteLine($"[GENRETURN] Mapped result: '{mapped}'");
+            return mapped;
         }
 
         return "void";
@@ -569,10 +626,16 @@ public sealed class CodeGenerator : ICodeGenerator
         var route = endpoint.Route;
 
         // Replace route parameters with template literals
-        // /products/{id} -> `/products/${id}`
+        // /products/{id:guid} -> `/products/${id}`
         foreach (var param in endpoint.Parameters.Where(p => p.Source == ParameterSource.Route))
         {
-            route = route.Replace($"{{{param.Name}}}", $"${{{ToCamelCase(param.Name)}}}");
+            // Match both {param} and {param:constraint}
+            var pattern = $@"\{{{param.Name}(?::\w+)?\}}";
+            route = System.Text.RegularExpressions.Regex.Replace(
+                route,
+                pattern,
+                $"${{{ToCamelCase(param.Name)}}}"
+            );
         }
 
         return $"`{route}`";
@@ -1140,7 +1203,7 @@ public sealed class CodeGenerator : ICodeGenerator
         // Count brackets to see if they're balanced
         var openCount = typeName.Count(c => c == '<');
         var closeCount = typeName.Count(c => c == '>');
-        
+
         if (openCount != closeCount)
         {
             // Malformed - extract just the base type name

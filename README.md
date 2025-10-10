@@ -4,8 +4,10 @@
 
 CodeBridge is a powerful SDK generator that creates type-safe TypeScript/JavaScript clients for React and Next.js applications from your .NET APIs. No more manual API client coding - let CodeBridge do the heavy lifting!
 
-[![NuGet](https://img.shields.io/nuget/v/CodeBridge.svg)](https://www.nuget.org/packages/CodeBridge/)
-[![Downloads](https://img.shields.io/nuget/dt/CodeBridge.svg)](https://www.nuget.org/packages/CodeBridge/)
+[![NuGet CLI](https://img.shields.io/nuget/v/CodeBridge.Cli.svg?label=CLI)](https://www.nuget.org/packages/CodeBridge.Cli/)
+[![NuGet Core](https://img.shields.io/nuget/v/CodeBridge.Core.svg?label=Core)](https://www.nuget.org/packages/CodeBridge.Core/)
+[![NuGet MSBuild](https://img.shields.io/nuget/v/CodeBridge.MSBuild.svg?label=MSBuild)](https://www.nuget.org/packages/CodeBridge.MSBuild/)
+[![Downloads](https://img.shields.io/nuget/dt/CodeBridge.Cli.svg)](https://www.nuget.org/packages/CodeBridge.Cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 ## ✨ Features
@@ -37,16 +39,35 @@ dotnet tool install -g CodeBridge.Cli
 
 ```bash
 cd your-api-project
-codebridge init --framework react
+codebridge init --template react --output ./generated-sdk
 ```
 
-### 4. Generate your SDK
+This creates a `codebridge.json` configuration file. Customize it with your project paths and settings.
+
+### 4. Add the [GenerateSdk] attribute (optional)
+
+```csharp
+[GenerateSdk] // Mark endpoints for SDK generation
+[HttpGet]
+public async Task<ActionResult<ProductResponse>> GetProduct(Guid id)
+{
+    // Your implementation
+}
+```
+
+If you don't use attributes, CodeBridge will auto-discover all API endpoints.
+
+### 5. Generate your SDK
 
 ```bash
 codebridge generate
 ```
 
-That's it! 🎉 Your TypeScript SDK is ready in the output folder.
+That's it! 🎉 Your TypeScript SDK is ready in the output folder with:
+- ✅ `package.json` (with TypeScript and dependencies)
+- ✅ `tsconfig.json` (configured for your project)
+- ✅ `README.md` (usage documentation)
+- ✅ Type-safe TypeScript code (API clients, hooks, types, validation)
 
 ## 📖 Documentation
 
@@ -138,33 +159,43 @@ function ProductList() {
 
 ## ⚙️ Configuration
 
-Create a `codebridge.json` in your API project:
+Run `codebridge init` to create a `codebridge.json` configuration file, or create one manually:
 
 ```json
 {
-  "solutionPath": "./MyApp.sln",
-  "output": {
-    "path": "../frontend/sdk",
-    "packageName": "@myapp/api-client",
-    "packageVersion": "1.0.0"
+  "SolutionPath": "./MyApp.sln",
+  "ProjectPaths": [],
+  "Output": {
+    "Path": "./generated-sdk",
+    "PackageName": "@myapp/api-client",
+    "PackageVersion": "1.0.0",
+    "License": "MIT"
   },
-  "target": {
-    "framework": "react",
-    "language": "typescript"
+  "Target": {
+    "Framework": 0,
+    "Language": "typescript",
+    "ModuleSystem": 0
   },
-  "api": {
-    "baseUrl": "https://api.myapp.com"
+  "Api": {
+    "BaseUrl": "https://api.myapp.com",
+    "Authentication": {
+      "Type": 1,
+      "Storage": 0
+    }
   },
-  "features": {
-    "generateReactHooks": true,
-    "includeValidation": true,
-    "includeAuthentication": true
+  "Features": {
+    "GenerateReactHooks": true,
+    "IncludeValidation": true,
+    "IncludeAuthentication": true,
+    "GenerateDocComments": true
   },
-  "generation": {
-    "mode": "manual"
+  "Generation": {
+    "Mode": 0
   }
 }
 ```
+
+**Note:** Use `codebridge init --interactive` for a guided setup experience.
 
 ## 🔧 Generation Modes
 

@@ -20,17 +20,32 @@
             .NET APIs</Description>
 
         <!-- Version -->
-        <Version>1.0.0-preview.8</Version>
+        <Version>1.0.0</Version>
         <AssemblyVersion>1.0.0.0</AssemblyVersion>
         <FileVersion>1.0.0.0</FileVersion>
         <PackageReleaseNotes>
-            v1.0.0-preview.8: Fixed TypeScript compilation errors in generated SDK
-            - Fixed: React hook imports now use correct function names without "Async" suffix
-            - Fixed: API files now import Result type when used in return types
-            - Fixed: Added lib/index.ts barrel export for httpService
-            - Fixed: Validation schemas only generated for types with validators
-            - All 38 TypeScript compilation errors resolved
-            - Generated SDKs now fully type-safe and compilation-ready
+            v1.0.0: First stable release! 🎉
+
+            Major Features:
+            - ✅ Complete TypeScript SDK generation from .NET APIs
+            - ✅ React Query hooks with full type safety
+            - ✅ Auto-generated package.json and tsconfig.json
+            - ✅ Route parameter handling with ASP.NET Core constraints
+            - ✅ Zero TypeScript compilation errors in generated code
+            - ✅ 60+ C# to TypeScript type mappings
+            - ✅ Zod validation schema generation
+            - ✅ CLI tool with init, generate, and watch commands
+            - ✅ MSBuild integration for automatic generation
+
+            Key Improvements:
+            - Fixed route parameter extraction for {id:guid}, {roleId:int}, etc.
+            - Fixed parameter order: route params before body params
+            - Fixed nested generic types (Result&lt;T&gt;) with proper closing brackets
+            - Fixed namespace pollution in discovered types
+            - Fixed hook generation for DELETE, PUT, PATCH, POST endpoints
+            - Added comprehensive .NET type mappings (Nullable, IReadOnlyList, Dictionary, etc.)
+
+            See CHANGELOG.md for complete details.
         </PackageReleaseNotes>
     </PropertyGroup>
 

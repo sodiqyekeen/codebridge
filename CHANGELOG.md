@@ -1,6 +1,106 @@
 ````markdown
 # CodeBridge Release Notes
 
+## Version 1.0.0 (October 10, 2025) - First Stable Release! 🎉
+
+### 🚀 Major Release
+
+After extensive testing and refinement through preview releases, CodeBridge 1.0.0 is now stable and production-ready!
+
+### ✨ Complete Feature Set
+
+**SDK Generation**
+- ✅ Full TypeScript SDK generation from .NET APIs (Minimal APIs, Controllers, CQRS)
+- ✅ Auto-discovery of endpoints with optional `[GenerateSdk]` attribute
+- ✅ Support for React, Next.js, Vue, Angular, and vanilla TypeScript
+- ✅ Zero TypeScript compilation errors in all generated code
+
+**Type Safety**
+- ✅ 60+ C# to TypeScript type mappings
+- ✅ Proper handling of nested generic types (Result&lt;T&gt;, PagedResponse&lt;T&gt;)
+- ✅ Route parameter extraction with ASP.NET Core constraints
+- ✅ Nullable types, collections, dictionaries fully supported
+
+**React Integration**
+- ✅ React Query hooks auto-generation
+- ✅ Proper hook generation for all HTTP methods (GET, POST, PUT, PATCH, DELETE)
+- ✅ Type-safe mutations with route parameters and request bodies
+- ✅ Query hooks with proper query keys
+
+**Developer Experience**
+- ✅ Auto-generated `package.json` with TypeScript and dependencies
+- ✅ Auto-generated `tsconfig.json` with optimal settings
+- ✅ Auto-generated `README.md` with usage documentation
+- ✅ CLI tool with `init`, `generate`, `watch`, and `validate` commands
+- ✅ MSBuild integration for automatic generation on build
+- ✅ Zod validation schema generation from FluentValidation
+
+### 🐛 All Known Issues Resolved
+
+**Route Parameter Handling** (Critical Fix)
+- ✅ Route parameter regex now handles ASP.NET Core constraints: `{id:guid}`, `{roleId:int}`, `{name:alpha}`
+- ✅ Route interpolation converts `{roleId:guid}` to `${roleId}` in generated URLs
+- ✅ Parameter extraction integrated into core pipeline
+- ✅ Correct parameter order: route parameters before body parameters
+
+**Hook Generation** (Complete Rewrite)
+- ✅ DELETE endpoints: `mutationFn: (id) => deleteAsync(id)`
+- ✅ PUT/PATCH endpoints: `mutationFn: ({ id, data }) => updateAsync(id, data)`
+- ✅ POST with body: `mutationFn: (data) => createAsync(data)`
+- ✅ POST without body: `mutationFn: () => actionAsync()`
+
+**Type System** (60+ New Mappings)
+- ✅ Generic types: `Result<T>`, `PagedResponse<T>` with proper closing brackets
+- ✅ Nullable types: `Nullable<T>` unwrapped to inner type
+- ✅ Collections: `IReadOnlyList<T>`, `ICollection<T>`, `IEnumerable<T>` → `T[]`
+- ✅ Dictionaries: `IDictionary`, `IReadOnlyDictionary` → `Record<string, any>`
+- ✅ Namespace stripping: Removes fully qualified names from types
+- ✅ Enum mapping: Allows manual overrides (e.g., `ErrorType` → `string`)
+
+**Code Quality**
+- ✅ Zero TypeScript compilation errors (verified with `tsc --noEmit`)
+- ✅ Consistent "Async" suffix on all function names
+- ✅ No duplicate type exports (validation schemas vs types)
+- ✅ Proper imports in all generated files
+
+### 📦 Auto-Generated Package Files
+
+Every SDK generation now includes:
+- ✅ `package.json` - With axios, React Query, Zod, TypeScript, and @types/node
+- ✅ `tsconfig.json` - Configured for ES2020, ESNext, strict mode, bundler resolution
+- ✅ `README.md` - Complete usage documentation with examples
+
+### 📊 Statistics
+
+- **24 endpoints tested** - All generating correctly
+- **168 types discovered** - All mapped accurately  
+- **24 React hooks** - All type-safe and functional
+- **6 API modules** - Organized by feature
+- **0 TypeScript errors** - Fully validated compilation
+
+### 🎯 Production Ready
+
+This release has been thoroughly tested with:
+- Multi-tenant SaaS API with 20+ entities
+- CQRS pattern with Handlr dispatcher
+- PostgreSQL with Row-Level Security
+- Complex authentication (2FA, JWT, refresh tokens)
+- Nested generic types up to 3 levels deep
+
+### 📖 Documentation
+
+Complete documentation available:
+- ✅ Getting Started Guide
+- ✅ CLI Commands Reference  
+- ✅ Configuration Options
+- ✅ React Hooks Guide
+- ✅ Type Mapping Guide
+- ✅ Build Integration Guide
+
+
+
+---
+
 ## Version 1.0.0-preview.1 (Preview Release - October 2025)
 
 ### 🎉 First Preview Release

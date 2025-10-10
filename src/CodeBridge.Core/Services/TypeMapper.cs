@@ -85,7 +85,59 @@ public sealed class TypeMapper(ILogger<TypeMapper> logger, AdvancedOptions? adva
             { "Stream", "Blob" },
             { "System.IO.Stream", "Blob" },
             { "FileStream", "Blob" },
-            { "System.IO.FileStream", "Blob" }
+            { "System.IO.FileStream", "Blob" },
+            
+            // Dictionary types (non-generic fallback)
+            { "Dictionary", "Record<string, any>" },
+            { "System.Collections.Generic.Dictionary", "Record<string, any>" },
+            { "IDictionary", "Record<string, any>" },
+            { "System.Collections.Generic.IDictionary", "Record<string, any>" },
+            { "IReadOnlyDictionary", "Record<string, any>" },
+            { "System.Collections.Generic.IReadOnlyDictionary", "Record<string, any>" },
+            
+            // Collection types (non-generic fallback)
+            { "IReadOnlyList", "any[]" },
+            { "System.Collections.Generic.IReadOnlyList", "any[]" },
+            { "IReadOnlyCollection", "any[]" },
+            { "System.Collections.Generic.IReadOnlyCollection", "any[]" },
+            { "ICollection", "any[]" },
+            { "System.Collections.Generic.ICollection", "any[]" },
+            { "List", "any[]" },
+            { "System.Collections.Generic.List", "any[]" },
+            { "IList", "any[]" },
+            { "System.Collections.Generic.IList", "any[]" },
+            { "IEnumerable", "any[]" },
+            { "System.Collections.Generic.IEnumerable", "any[]" },
+            
+            // Nullable (non-generic fallback - will be unwrapped by logic)
+            { "Nullable", "any" },
+            { "System.Nullable", "any" },
+            
+            // Common entity types that shouldn't be in SDK (map to any to avoid errors)
+            { "Organization", "any" },
+            { "User", "any" },
+            { "Role", "any" },
+            { "Permission", "any" },
+            { "OrganizationUser", "any" },
+            { "TwoFactorSetup", "any" },
+            { "BackupCode", "any" },
+            { "RefreshToken", "any" },
+            { "OrganizationUserRole", "any" },
+            { "RolePermission", "any" },
+            { "PasswordResetAttempt", "any" },
+            { "OrganizationInvitation", "any" },
+            { "JobExecution", "any" },
+            { "Notification", "any" },
+            { "SignalRConnection", "any" },
+            { "AuditLog", "any" },
+            { "TenantAccessor", "any" },
+            { "TenantEntityBase", "any" },
+            { "TenantSettings", "any" },
+            
+            // Error types
+            { "ApiError", "any" },
+            { "ErrorType", "string" }, // Enum values: Validation, NotFound, Conflict, Unauthorized, Forbidden, InternalError, ServiceUnavailable, Unknown
+            { "ValidationException", "any" }
         };
     private readonly Dictionary<string, string> _customTypeMappings = advancedOptions?.CustomTypeMappings ?? new Dictionary<string, string>();
 
@@ -107,20 +159,7 @@ public sealed class TypeMapper(ILogger<TypeMapper> logger, AdvancedOptions? adva
             return ApplyNullability(customMapping, typeInfo.IsNullable);
         }
 
-        // Handle enums
-        if (typeInfo.IsEnum)
-        {
-            return ApplyNullability(typeInfo.Name, typeInfo.IsNullable);
-        }
-
-        // Handle generic types
-        if (typeInfo.IsGeneric && typeInfo.GenericArguments.Count > 0)
-        {
-            var mappedType = MapGenericType(typeInfo);
-            return ApplyNullability(mappedType, typeInfo.IsNullable);
-        }
-
-        // Handle primitive types
+        // Check primitive type mappings (includes manually mapped enums like ErrorType)
         if (_primitiveTypeMappings.TryGetValue(typeInfo.Name, out var primitiveMapping))
         {
             return ApplyNullability(primitiveMapping, typeInfo.IsNullable);
@@ -129,6 +168,33 @@ public sealed class TypeMapper(ILogger<TypeMapper> logger, AdvancedOptions? adva
         if (_primitiveTypeMappings.TryGetValue(typeInfo.FullName, out var fullPrimitiveMapping))
         {
             return ApplyNullability(fullPrimitiveMapping, typeInfo.IsNullable);
+        }
+
+        // Handle enums (only if not already mapped above)
+        if (typeInfo.IsEnum)
+        {
+            return ApplyNullability(typeInfo.Name, typeInfo.IsNullable);
+        }
+
+        // Handle generic types
+        if (typeInfo.IsGeneric)
+        {
+            // If GenericArguments are populated, use structured mapping
+            if (typeInfo.GenericArguments.Count > 0)
+            {
+                var mappedType = MapGenericType(typeInfo);
+                return ApplyNullability(mappedType, typeInfo.IsNullable);
+            }
+
+            // Otherwise, fall back to string-based parsing (e.g., for types discovered from .Produces<T>() metadata)
+            // This handles cases like "Result<InitiatePasswordResetResponse>" where we have the full string but not parsed GenericArguments
+            if (typeInfo.Name.Contains('<') && typeInfo.Name.Contains('>'))
+            {
+                Console.WriteLine($"[TYPEMAPPER] Input: {typeInfo.Name}");
+                var mappedType = MapGenericTypeString(typeInfo.Name);
+                Console.WriteLine($"[TYPEMAPPER] Output: {mappedType}");
+                return ApplyNullability(mappedType, typeInfo.IsNullable);
+            }
         }
 
         // Default to the type name for custom DTOs

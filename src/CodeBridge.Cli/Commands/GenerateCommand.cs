@@ -143,6 +143,12 @@ public sealed class GenerateCommand : Command
         var referencedTypes = await ExtractReferencedTypesFromEndpointsAsync(endpoints, types, sourceAnalyzer, projects, cancellationToken);
         types.AddRange(referencedTypes);
 
+        // Extract parameters for each endpoint (route params, query params, body)
+        foreach (var endpoint in endpoints)
+        {
+            endpoint.Parameters = await sourceAnalyzer.ExtractParametersAsync(endpoint, types, cancellationToken);
+        }
+
         logger.LogInformation("   ✓ Found {EndpointCount} endpoints", endpoints.Count);
         logger.LogInformation("   ✓ Found {TypeCount} types", types.Count);
 
@@ -207,7 +213,7 @@ export interface Result<T> {
                 ? await codeGenerator.GenerateTypeScriptEnumAsync(type, cancellationToken)
                 : await codeGenerator.GenerateTypeScriptInterfaceAsync(type, cancellationToken);
 
-            var fileName = $"{ToCamelCase(type.Name)}.ts";
+            var fileName = $"{ToCamelCase(SanitizeFileName(type.Name))}.ts";
             await File.WriteAllTextAsync(Path.Combine(typesDir, fileName), content, cancellationToken);
         }
 
@@ -215,7 +221,7 @@ export interface Result<T> {
 
         // Generate types index.ts (barrel export)
         var typeExports = new List<string> { "result" }; // Always include Result<T>
-        typeExports.AddRange(types.Select(t => ToCamelCase(t.Name)));
+        typeExports.AddRange(types.Select(t => ToCamelCase(SanitizeFileName(t.Name))));
         var typesIndexContent = await codeGenerator.GenerateBarrelExportAsync(typeExports, cancellationToken);
         await File.WriteAllTextAsync(Path.Combine(typesDir, "index.ts"), typesIndexContent, cancellationToken);
         logger.LogInformation("   ✓ Generated types/index.ts");
@@ -317,7 +323,7 @@ export interface Result<T> {
                 {
                     sb.AppendLine("import { useMutation } from '@tanstack/react-query';");
                 }
-                sb.AppendLine($"import {{ {functionName} }} from '../api/{ToCamelCase(groupName)}';");
+                sb.AppendLine($"import {{ {functionName}Async }} from '../api/{ToCamelCase(groupName)}';");
 
                 // Add type imports if needed
                 if (endpoint.RequestType != null || endpoint.ResponseType != null)
@@ -378,9 +384,11 @@ export interface Result<T> {
         // Phase 4: Package Generation
         logger.LogInformation("\n📦 Phase 4/4: Generating package files...");
         await GeneratePackageJsonAsync(outputPath, config, cancellationToken);
+        await GenerateTsConfigAsync(outputPath, cancellationToken);
         await GenerateReadmeAsync(outputPath, config, cancellationToken);
 
         logger.LogInformation("   ✓ Generated package.json");
+        logger.LogInformation("   ✓ Generated tsconfig.json");
         logger.LogInformation("   ✓ Generated README.md");
 
         stopwatch.Stop();
@@ -467,6 +475,10 @@ export interface Result<T> {
             {{(config.Features.IncludeValidation ? "\"zod\": \"^3.22.0\"," : "")}}
             {{(config.Features.GenerateReactHooks ? "\"@tanstack/react-query\": \"^5.0.0\"," : "")}}
             "axios": "^1.6.0"
+          },
+          "devDependencies": {
+            "typescript": "^5.9.0",
+            "@types/node": "^22.0.0"
           }
         }
         """;
@@ -474,6 +486,46 @@ export interface Result<T> {
         await File.WriteAllTextAsync(
             Path.Combine(outputPath, "package.json"),
             packageJson,
+            cancellationToken);
+    }
+
+    private static async Task GenerateTsConfigAsync(
+        string outputPath,
+        CancellationToken cancellationToken)
+    {
+        var tsConfig = """
+        {
+          "compilerOptions": {
+            "target": "ES2020",
+            "module": "ESNext",
+            "lib": ["ES2020", "DOM"],
+            "moduleResolution": "bundler",
+            "strict": true,
+            "skipLibCheck": true,
+            "esModuleInterop": true,
+            "allowSyntheticDefaultImports": true,
+            "declaration": true,
+            "declarationMap": true,
+            "sourceMap": true,
+            "outDir": "./dist",
+            "rootDir": ".",
+            "types": ["node"]
+          },
+          "include": [
+            "api/**/*",
+            "hooks/**/*",
+            "lib/**/*",
+            "types/**/*",
+            "validation/**/*",
+            "index.ts"
+          ],
+          "exclude": ["node_modules", "dist"]
+        }
+        """;
+
+        await File.WriteAllTextAsync(
+            Path.Combine(outputPath, "tsconfig.json"),
+            tsConfig,
             cancellationToken);
     }
 
@@ -578,9 +630,88 @@ This SDK was automatically generated using [CodeBridge](https://github.com/sodiq
         // Remove array suffix (User[] -> User, WeatherForecast[] -> WeatherForecast)
         typeName = typeName.TrimEnd('[', ']');
 
-        // Extract base type from generics (Result<User> -> Result, User)
-        // For now, just return the cleaned name - generic extraction happens in CodeGenerator
-        return typeName;
+        // Extract all type names from generics: Result<User> -> "Result, User"
+        // This is needed for import statements which must list all types separately
+        var typeNames = new List<string>();
+        ExtractAllTypeNames(typeName, typeNames);
+
+        return string.Join(", ", typeNames.Distinct());
+    }
+
+    private static void ExtractAllTypeNames(string typeName, List<string> typeNames)
+    {
+        if (string.IsNullOrEmpty(typeName))
+            return;
+
+        var genericStart = typeName.IndexOf('<');
+        if (genericStart > 0)
+        {
+            // Add base type: Result<User> -> add "Result"
+            var baseType = typeName.Substring(0, genericStart).Trim();
+            if (!string.IsNullOrEmpty(baseType))
+                typeNames.Add(baseType);
+
+            // Extract inner types: Result<User> -> "User"
+            var genericEnd = typeName.LastIndexOf('>');
+            if (genericEnd > genericStart)
+            {
+                var innerTypes = typeName.Substring(genericStart + 1, genericEnd - genericStart - 1);
+
+                // Split by comma (accounting for nested generics)
+                var parts = SplitGenericParts(innerTypes);
+                foreach (var part in parts)
+                {
+                    ExtractAllTypeNames(part.Trim(), typeNames); // Recursive for nested generics
+                }
+            }
+        }
+        else
+        {
+            // Not a generic type, just add it
+            var cleaned = typeName.Trim();
+            if (!string.IsNullOrEmpty(cleaned))
+                typeNames.Add(cleaned);
+        }
+    }
+
+    private static List<string> SplitGenericParts(string genericArgs)
+    {
+        var parts = new List<string>();
+        var currentPart = new StringBuilder();
+        var depth = 0;
+
+        foreach (var ch in genericArgs)
+        {
+            if (ch == '<')
+            {
+                depth++;
+                currentPart.Append(ch);
+            }
+            else if (ch == '>')
+            {
+                depth--;
+                currentPart.Append(ch);
+            }
+            else if (ch == ',' && depth == 0)
+            {
+                if (currentPart.Length > 0)
+                {
+                    parts.Add(currentPart.ToString().Trim());
+                    currentPart.Clear();
+                }
+            }
+            else
+            {
+                currentPart.Append(ch);
+            }
+        }
+
+        if (currentPart.Length > 0)
+        {
+            parts.Add(currentPart.ToString().Trim());
+        }
+
+        return parts;
     }
 
     private static async Task<List<TypeInfo>> ExtractReferencedTypesFromEndpointsAsync(
@@ -769,6 +900,22 @@ This SDK was automatically generated using [CodeBridge](https://github.com/sodiq
         };
 
         return primitiveTypes.Contains(typeName);
+    }
+
+    private static string SanitizeFileName(string typeName)
+    {
+        if (string.IsNullOrEmpty(typeName))
+            return typeName;
+
+        // Remove generic parameters: Result<User> -> Result, PagedResponse<T> -> PagedResponse
+        var genericStart = typeName.IndexOf('<');
+        if (genericStart > 0)
+        {
+            return typeName.Substring(0, genericStart);
+        }
+
+        // Remove array brackets: User[] -> User
+        return typeName.TrimEnd('[', ']');
     }
 
     private static string GetCodeBridgeVersion()

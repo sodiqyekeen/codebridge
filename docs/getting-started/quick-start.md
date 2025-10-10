@@ -84,23 +84,38 @@ public record CreateProductRequest
 }
 ```
 
-## Step 4: Initialize Configuration (Optional)
+## Step 4: Initialize Configuration
 
-Create a configuration file for customization:
+Create a configuration file:
 
 ```bash
-codebridge init
+codebridge init --template react --output ./generated-sdk
 ```
 
-This creates a `codebridge.json` file with default settings:
+This creates a `codebridge.json` file. Customize it with your project details:
 
 ```json
 {
-  "outputPath": "./generated",
-  "baseUrl": "https://localhost:5001",
-  "httpClient": "axios",
-  "generateInterfaces": true,
-  "generateEnums": true
+  "SolutionPath": "./MyApi.sln",
+  "ProjectPaths": [],
+  "Output": {
+    "Path": "./generated-sdk",
+    "PackageName": "@myorg/api-client",
+    "PackageVersion": "1.0.0",
+    "License": "MIT"
+  },
+  "Target": {
+    "Framework": 0,
+    "Language": "typescript",
+    "ModuleSystem": 0
+  },
+  "Api": {
+    "BaseUrl": "https://localhost:5001"
+  },
+  "Features": {
+    "GenerateReactHooks": true,
+    "IncludeValidation": true
+  }
 }
 ```
 
@@ -122,100 +137,111 @@ The SDK will be automatically generated during the build process.
 
 ## Step 6: View the Generated SDK
 
-Navigate to the output folder (default: `./generated`):
+Navigate to the output folder (default: `./generated-sdk`):
 
 ```
-generated/
-├── types.ts          # TypeScript interfaces for all models
-├── api.ts            # API client functions
-└── index.ts          # Main export file
+generated-sdk/
+├── package.json         # npm package with dependencies
+├── tsconfig.json        # TypeScript configuration  
+├── README.md           # Usage documentation
+├── index.ts            # Main export file
+├── api/
+│   ├── products.ts     # Products API client
+│   └── index.ts
+├── hooks/              # React Query hooks (if enabled)
+│   ├── useGetProducts.ts
+│   ├── useCreateProduct.ts
+│   └── index.ts
+├── types/              # TypeScript interfaces
+│   ├── product.ts
+│   ├── createProductRequest.ts
+│   └── index.ts
+├── lib/                # HTTP client utilities
+│   ├── httpService.ts
+│   └── index.ts
+└── validation/         # Zod schemas (if enabled)
+    └── index.ts
 ```
 
 ### Example Generated Code
 
-**types.ts:**
+**types/product.ts:**
 ```typescript
 export interface Product {
   id: number;
   name: string;
   price: number;
 }
+```
 
-export interface CreateProductRequest {
-  name: string;
-  price: number;
+**api/products.ts:**
+```typescript
+import http from '../lib/httpService';
+import type { Product, CreateProductRequest } from '../types';
+
+export async function getProductsAsync(): Promise<Product[]> {
+  return http.get<Product[]>('/api/Products');
+}
+
+export async function getProductAsync(id: number): Promise<Product> {
+  return http.get<Product>(`/api/Products/${id}`);
+}
+
+export async function createProductAsync(data: CreateProductRequest): Promise<Product> {
+  return http.post<Product>('/api/Products', data);
 }
 ```
 
-**api.ts:**
+**hooks/useGetProducts.ts:** (if React hooks enabled)
 ```typescript
-import axios from 'axios';
-import type { Product, CreateProductRequest } from './types';
+import { useQuery } from '@tanstack/react-query';
+import { getProductsAsync } from '../api/products';
 
-const baseURL = 'https://localhost:5001';
-
-export async function getProducts(): Promise<Product[]> {
-  const response = await axios.get<Product[]>(`${baseURL}/api/Products`);
-  return response.data;
-}
-
-export async function getProduct(id: number): Promise<Product> {
-  const response = await axios.get<Product>(`${baseURL}/api/Products/${id}`);
-  return response.data;
-}
-
-export async function createProduct(request: CreateProductRequest): Promise<Product> {
-  const response = await axios.post<Product>(`${baseURL}/api/Products`, request);
-  return response.data;
+export function useGetProducts() {
+  return useQuery({
+    queryKey: ['products'],
+    queryFn: () => getProductsAsync()
+  });
 }
 ```
 
-## Step 7: Use in Your Frontend
+## Step 7: Install and Use in Your Frontend
 
-### React Example
+### Install the SDK
+
+```bash
+cd generated-sdk
+npm install
+```
+
+This installs all dependencies including TypeScript, axios, and React Query (if enabled).
+
+### React Example with Hooks
 
 ```typescript
-import { useEffect, useState } from 'react';
-import { getProducts, type Product } from './generated';
+import { useGetProducts, useCreateProduct } from './generated-sdk';
+import type { CreateProductRequest } from './generated-sdk';
 
 function ProductList() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { data: products, isLoading } = useGetProducts();
+  const createProduct = useCreateProduct();
 
-  useEffect(() => {
-    getProducts()
-      .then(setProducts)
-      .finally(() => setLoading(false));
-  }, []);
+  const handleCreate = async () => {
+    const newProduct: CreateProductRequest = {
+      name: 'New Product',
+      price: 99.99
+    };
+    
+    await createProduct.mutateAsync(newProduct);
+  };
 
-  if (loading) return <div>Loading...</div>;
-
-  return (
-    <ul>
-      {products.map(product => (
-        <li key={product.id}>
-          {product.name} - ${product.price}
-        </li>
-      ))}
-    </ul>
-  );
-}
-```
-
-### Next.js Example
-
-```typescript
-// app/products/page.tsx
-import { getProducts } from '@/generated';
-
-export default async function ProductsPage() {
-  const products = await getProducts();
+  if (isLoading) return <div>Loading...</div>;
 
   return (
     <div>
-      <h1>Products</h1>
+      <button onClick={handleCreate}>Create Product</button>
       <ul>
-        {products.map(product => (
+        {products?.map(product => (
           <li key={product.id}>
             {product.name} - ${product.price}
           </li>
@@ -223,6 +249,23 @@ export default async function ProductsPage() {
       </ul>
     </div>
   );
+}
+```
+
+### Direct API Usage (without hooks)
+
+```typescript
+import { getProductsAsync, createProductAsync } from './generated-sdk';
+
+async function loadProducts() {
+  const products = await getProductsAsync();
+  console.log(products);
+  
+  const newProduct = await createProductAsync({
+    name: 'New Product',
+    price: 99.99
+  });
+  console.log(newProduct);
 }
 ```
 
@@ -237,7 +280,9 @@ export default async function ProductsPage() {
 
 1. **Watch Mode**: Use `codebridge watch` during development to auto-regenerate on file changes
 2. **Validation**: Run `codebridge validate` to check your configuration before generating
-3. **Multiple Controllers**: Add `[GenerateSdk]` to as many controllers as you want
-4. **Custom Base URL**: Set `baseUrl` in `codebridge.json` for different environments
+3. **Multiple Controllers**: Add `[GenerateSdk]` to as many controllers as you want (or use auto-discovery)
+4. **TypeScript Ready**: Generated SDK includes `package.json` and `tsconfig.json` - just run `npm install`!
+5. **Zero Errors**: All generated code is fully type-safe with zero TypeScript compilation errors
+6. **Route Parameters**: Endpoints with route parameters (`{id}`) automatically generate functions with those parameters
 
 Congratulations! 🎉 You've successfully generated your first TypeScript SDK with CodeBridge.

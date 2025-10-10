@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using CodeBridge.Core.Models;
 using CodeBridge.Core.Models.Configuration;
@@ -871,12 +872,19 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             if (typeArg != null)
             {
                 var typeName = typeArg.ToString();
+                Console.WriteLine($"[EXTRACT] Original typeArg.ToString(): '{typeName}'");
 
                 // Strip ApiResponse wrapper: ApiResponse<Result<T>> -> Result<T>
                 var innerType = ExtractTypeFromGeneric(typeName, "ApiResponse");
+                Console.WriteLine($"[EXTRACT] After ExtractTypeFromGeneric: '{innerType}'");
 
                 // Keep Result<T> as-is or use the extracted inner type
                 var finalType = innerType ?? typeName;
+
+                // Strip namespace from type names: Application.Commands.Authentication.RefreshTokenResponse -> RefreshTokenResponse
+                finalType = StripNamespaceFromType(finalType);
+
+                Console.WriteLine($"[EXTRACT] Final type: '{finalType}'");
 
                 // Note: Don't strip [] here - TypeMapper expects "User[]" format
                 // The full type with [] will be used for TypeScript generation
@@ -1104,22 +1112,33 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
             var body = method.Body?.ToString();
             if (!string.IsNullOrEmpty(body))
             {
-                var sendAsyncPattern = @"SendAsync<([^>]+(?:<[^>]+>)?)>";
-                var match = Regex.Match(body, sendAsyncPattern);
-                if (match.Success)
+                // Find SendAsync< and then extract the full generic type argument using bracket matching
+                var sendAsyncIndex = body.IndexOf("SendAsync<");
+                if (sendAsyncIndex >= 0)
                 {
-                    var dispatcherType = match.Groups[1].Value.Trim();
-                    var innerType = ExtractTypeFromGeneric(dispatcherType, "Result");
-                    responseType = new TypeInfo
+                    var startIndex = sendAsyncIndex + "SendAsync<".Length;
+                    var dispatcherType = ExtractGenericTypeArgument(body, startIndex);
+
+                    if (!string.IsNullOrEmpty(dispatcherType))
                     {
-                        Name = innerType ?? dispatcherType,
-                        FullName = innerType ?? dispatcherType,
-                        Namespace = null,
-                        IsEnum = false,
-                        Properties = [],
-                        IsGeneric = false,
-                        GenericArguments = []
-                    };
+                        Console.WriteLine($"[DISPATCHER] Extracted from SendAsync: '{dispatcherType}'");
+
+                        // Strip namespace from type names
+                        dispatcherType = StripNamespaceFromType(dispatcherType);
+                        Console.WriteLine($"[DISPATCHER] After namespace strip: '{dispatcherType}'");
+
+                        // Keep the full Result<T> type - don't unwrap it!
+                        responseType = new TypeInfo
+                        {
+                            Name = dispatcherType,
+                            FullName = dispatcherType,
+                            Namespace = null,
+                            IsEnum = false,
+                            Properties = [],
+                            IsGeneric = dispatcherType.Contains("<"),
+                            GenericArguments = []
+                        };
+                    }
                 }
             }
         }
@@ -1166,6 +1185,140 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
         }
 
         return string.IsNullOrEmpty(typeString) || typeString == "void" ? null : typeString;
+    }
+
+    /// <summary>
+    /// Extracts the full generic type argument from a string, starting at the position after '&lt;'.
+    /// Handles nested generics by counting bracket depth.
+    /// Example: For "Result&lt;CreateRoleResponse&gt;&gt;(command...)", starting after the first &lt;,
+    /// returns "Result&lt;CreateRoleResponse&gt;".
+    /// </summary>
+    private static string? ExtractGenericTypeArgument(string text, int startIndex)
+    {
+        if (startIndex >= text.Length)
+            return null;
+
+        var depth = 1; // We're already inside the first <
+        var sb = new StringBuilder();
+
+        for (int i = startIndex; i < text.Length; i++)
+        {
+            var ch = text[i];
+
+            if (ch == '<')
+            {
+                depth++;
+                sb.Append(ch);
+            }
+            else if (ch == '>')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    // Found the matching closing >
+                    return sb.ToString().Trim();
+                }
+                sb.Append(ch);
+            }
+            else
+            {
+                sb.Append(ch);
+            }
+        }
+
+        // If we got here, brackets weren't balanced
+        return null;
+    }
+
+    /// <summary>
+    /// Strips namespace from type names while preserving generic arguments.
+    /// Example: "Application.Commands.Authentication.RefreshTokenResponse" -> "RefreshTokenResponse"
+    /// Example: "Result&lt;Application.Commands.Authentication.RefreshTokenResponse&gt;" -> "Result&lt;RefreshTokenResponse&gt;"
+    /// </summary>
+    private static string StripNamespaceFromType(string typeName)
+    {
+        if (string.IsNullOrEmpty(typeName))
+            return typeName;
+
+        // If it contains generics, we need to process recursively
+        if (typeName.Contains('<'))
+        {
+            var genericStart = typeName.IndexOf('<');
+            var baseType = typeName.Substring(0, genericStart);
+
+            // Strip namespace from base type
+            var lastDot = baseType.LastIndexOf('.');
+            if (lastDot >= 0)
+                baseType = baseType.Substring(lastDot + 1);
+
+            // Extract and recursively process the generic arguments
+            var genericEnd = typeName.LastIndexOf('>');
+            if (genericEnd > genericStart)
+            {
+                var genericArgs = typeName.Substring(genericStart + 1, genericEnd - genericStart - 1);
+
+                // Split by comma, respecting nested generics
+                var processedArgs = new List<string>();
+                var parts = SplitGenericArgumentsForStripping(genericArgs);
+
+                foreach (var part in parts)
+                {
+                    processedArgs.Add(StripNamespaceFromType(part.Trim()));
+                }
+
+                return $"{baseType}<{string.Join(", ", processedArgs)}>";
+            }
+
+            return baseType;
+        }
+
+        // No generics, just strip namespace
+        var lastDotIndex = typeName.LastIndexOf('.');
+        return lastDotIndex >= 0 ? typeName.Substring(lastDotIndex + 1) : typeName;
+    }
+
+    /// <summary>
+    /// Splits generic arguments by comma, respecting nested generics.
+    /// Example: "Result&lt;User&gt;, PagedResponse&lt;Item&gt;" -> ["Result&lt;User&gt;", "PagedResponse&lt;Item&gt;"]
+    /// </summary>
+    private static List<string> SplitGenericArgumentsForStripping(string genericArgs)
+    {
+        var result = new List<string>();
+        var current = new StringBuilder();
+        var depth = 0;
+
+        foreach (var ch in genericArgs)
+        {
+            if (ch == '<')
+            {
+                depth++;
+                current.Append(ch);
+            }
+            else if (ch == '>')
+            {
+                depth--;
+                current.Append(ch);
+            }
+            else if (ch == ',' && depth == 0)
+            {
+                if (current.Length > 0)
+                {
+                    result.Add(current.ToString());
+                    current.Clear();
+                }
+            }
+            else
+            {
+                current.Append(ch);
+            }
+        }
+
+        if (current.Length > 0)
+        {
+            result.Add(current.ToString());
+        }
+
+        return result;
     }
 
     private static bool IsBuiltInType(string typeName)
@@ -1754,8 +1907,9 @@ public sealed class SourceAnalyzer(ILogger<SourceAnalyzer> logger, AdvancedOptio
     {
         var parameters = new List<ParameterInfo>();
 
-        // Extract route parameters (e.g., {id}, {customerId})
-        var routeParams = Regex.Matches(endpoint.Route, @"\{(\w+)\}")
+        // Extract route parameters (e.g., {id}, {customerId}, {roleId:guid})
+        // Updated regex to handle route constraints like {id:guid}, {id:int}, etc.
+        var routeParams = Regex.Matches(endpoint.Route, @"\{(\w+)(?::\w+)?\}")
             .Select(m => new ParameterInfo
             {
                 Name = m.Groups[1].Value,

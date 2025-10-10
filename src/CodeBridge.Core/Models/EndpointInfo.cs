@@ -38,7 +38,7 @@ public class EndpointInfo
     /// <summary>
     /// Route parameters.
     /// </summary>
-    public List<ParameterInfo> Parameters { get; init; } = new();
+    public List<ParameterInfo> Parameters { get; set; } = new();
 
     /// <summary>
     /// Whether authentication is required.
