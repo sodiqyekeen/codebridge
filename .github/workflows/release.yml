@@ -250,7 +250,7 @@ jobs:
     
     steps:
       - name: Create announcement
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const version = '${{ needs.create-release.outputs.version }}';
