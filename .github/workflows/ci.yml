@@ -45,7 +45,7 @@ jobs:
       
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: test-results
           path: '**/test-results.trx'
@@ -88,7 +88,7 @@ jobs:
           fi
       
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: coveragereport/
@@ -143,7 +143,7 @@ jobs:
         run: dotnet pack --no-build --configuration Release --output ./nupkgs
       
       - name: Upload NuGet artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: nuget-packages
           path: nupkgs/*.nupkg
